@@ -1,0 +1,998 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mummy Runner</title>
+<style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        background: #16213e;
+        font-family: monospace;
+    }
+    canvas {
+        border: 4px solid #0f3460;
+        border-radius: 10px;
+        image-rendering: pixelated;
+        image-rendering: crisp-edges;
+        box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+    }
+</style>
+</head>
+<body>
+
+<canvas id="gameCanvas" width="800" height="400"></canvas>
+
+<script>
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+let gameState = "menu";
+let score = 0;
+let highScore = 0;
+
+// ================= PLAYER (MUMMY) ===================
+
+const player = {
+    x: 120,
+    y: 0,
+    width: 28,
+    height: 36,
+    vy: 0,
+    jumping: false,
+    frame: 0,
+    walkCycle: 0,
+    ducking: false,
+    duckHeight: 20
+};
+
+// ================= WORLD ===================
+
+const game = {
+    gravity: 0.7,
+    ground: 340,
+    frameCount: 0,
+    speed: 5,
+    obstacles: [],
+    powerups: [],
+    coins: [],
+    coinScore: 0,
+    bird: null,
+    birdActive: false
+};
+
+// ================= INPUT ===================
+
+window.addEventListener("keydown", e => {
+    if (e.code === "Space") {
+        if (gameState !== "playing") startGame();
+        else jump();
+    }
+    if (e.code === "ArrowDown" || e.code === "KeyS") {
+        if (gameState === "playing" && !player.jumping) {
+            player.ducking = true;
+        }
+    }
+});
+
+window.addEventListener("keyup", e => {
+    if (e.code === "ArrowDown" || e.code === "KeyS") {
+        player.ducking = false;
+    }
+});
+
+canvas.addEventListener("click", () => {
+    if (gameState !== "playing") startGame();
+    else jump();
+});
+
+// ================= GAME LOGIC ===================
+
+function startGame() {
+    gameState = "playing";
+    game.obstacles = [];
+    game.powerups = [];
+    game.coins = [];
+    game.frameCount = 0;
+    score = 0;
+    game.coinScore = 0;
+    game.speed = 5;
+    game.bird = null;
+    game.birdActive = false;
+
+    player.y = game.ground - player.height;
+    player.vy = 0;
+    player.jumping = false;
+    player.ducking = false;
+    player.walkCycle = 0;
+}
+
+function jump() {
+    if (!player.jumping && !player.ducking) {
+        player.vy = -14;
+        player.jumping = true;
+    }
+}
+
+// ================= MUMMY CHARACTER ===================
+
+function drawMummy() {
+    const px = player.x;
+    const currentHeight = player.ducking ? player.duckHeight : player.height;
+    const groundLevel = game.ground - currentHeight;
+    
+    if (!player.jumping) {
+        player.y = groundLevel;
+        if (!player.ducking) {
+            player.walkCycle += 0.15;
+        }
+    }
+
+    const py = player.y;
+    const p = 4;
+    player.frame++;
+
+    // Natural walking animation - only when on ground and not ducking
+    let legStride = 0;
+    let armSwing = 0;
+    let bodyBob = 0;
+    
+    if (!player.jumping && !player.ducking) {
+        legStride = Math.sin(player.walkCycle) * 2;
+        armSwing = Math.sin(player.walkCycle) * 1.5;
+        bodyBob = Math.abs(Math.sin(player.walkCycle * 2)) * 1;
+    }
+
+    if (player.ducking) {
+        // DUCKING POSE - draw lower to ground
+        const duckOffset = 16;
+        
+        // BLACK OUTLINES for ducking
+        ctx.fillStyle = "#000";
+        ctx.fillRect(px + p*1 - 1, py + duckOffset - 1, p*6 + 2, p*5 + 2);
+        ctx.fillRect(px + p*1.5 - 1, py + duckOffset - 1, p*5 + 2, p*3 + 2);
+        
+        // BODY horizontal
+        ctx.fillStyle = "#E8DCC8";
+        ctx.fillRect(px + p*1, py + duckOffset, p*6, p*5);
+        
+        // Bandages
+        ctx.fillStyle = "#D4C4A8";
+        ctx.fillRect(px + p*1, py + duckOffset + p*1, p*6, p*0.7);
+        ctx.fillRect(px + p*1, py + duckOffset + p*3, p*6, p*0.7);
+        
+        // HEAD forward
+        ctx.fillStyle = "#E8DCC8";
+        ctx.fillRect(px + p*1.5, py + duckOffset, p*5, p*3);
+        
+        // Head bandages
+        ctx.fillStyle = "#D4C4A8";
+        ctx.fillRect(px + p*1.5, py + duckOffset + p*0.5, p*5, p*0.7);
+        ctx.fillRect(px + p*1.5, py + duckOffset + p*2, p*5, p*0.7);
+        
+        // EYES
+        ctx.fillStyle = "#FF6B35";
+        ctx.fillRect(px + p*2.5, py + duckOffset + p*1, p*1, p*0.8);
+        ctx.fillRect(px + p*5, py + duckOffset + p*1, p*1, p*0.8);
+        
+        return;
+    }
+
+    // NORMAL STANDING POSE
+    // BLACK OUTLINES - Draw all outlines first
+    ctx.fillStyle = "#000";
+    
+    // Leg outlines
+    ctx.fillRect(px + p*2 - 1, py + p*9 - bodyBob + legStride - 1, p*2 + 2, p*3 + 2);
+    ctx.fillRect(px + p*4 - 1, py + p*9 - bodyBob - legStride - 1, p*2 + 2, p*3 + 2);
+    
+    // Body outline
+    ctx.fillRect(px + p*1 - 1, py + p*2 - bodyBob - 1, p*6 + 2, p*7 + 2);
+    
+    // Head outline
+    ctx.fillRect(px + p*1.5 - 1, py - bodyBob - 1, p*5 + 2, p*4 + 2);
+    
+    // Arm outlines
+    ctx.fillRect(px + p*0.5 - 1, py + p*3 - bodyBob + armSwing - 1, p*1.5 + 2, p*4 + 2);
+    ctx.fillRect(px + p*6 - 1, py + p*3 - bodyBob - armSwing - 1, p*1.5 + 2, p*4 + 2);
+
+    // LEGS - walking animation (draw first so body overlaps)
+    ctx.fillStyle = "#E8DCC8";
+    ctx.fillRect(px + p*2, py + p*9 - bodyBob + legStride, p*2, p*3);
+    ctx.fillRect(px + p*4, py + p*9 - bodyBob - legStride, p*2, p*3);
+
+    // Bandages on legs
+    ctx.fillStyle = "#D4C4A8";
+    ctx.fillRect(px + p*2, py + p*10 - bodyBob + legStride, p*2, p*0.5);
+    ctx.fillRect(px + p*4, py + p*10 - bodyBob - legStride, p*2, p*0.5);
+    ctx.fillRect(px + p*2, py + p*11 - bodyBob + legStride, p*2, p*0.5);
+    ctx.fillRect(px + p*4, py + p*11 - bodyBob - legStride, p*2, p*0.5);
+
+    // BODY - wrapped in bandages
+    ctx.fillStyle = "#E8DCC8";
+    ctx.fillRect(px + p*1, py + p*2 - bodyBob, p*6, p*7);
+
+    // Bandage texture on body
+    ctx.fillStyle = "#D4C4A8";
+    ctx.fillRect(px + p*1, py + p*3 - bodyBob, p*6, p*0.7);
+    ctx.fillRect(px + p*1, py + p*5 - bodyBob, p*6, p*0.7);
+    ctx.fillRect(px + p*1, py + p*7 - bodyBob, p*6, p*0.7);
+
+    // Bandage shadows
+    ctx.fillStyle = "#C4B498";
+    ctx.fillRect(px + p*1, py + p*3.7 - bodyBob, p*6, p*0.3);
+    ctx.fillRect(px + p*1, py + p*5.7 - bodyBob, p*6, p*0.3);
+
+    // HEAD
+    ctx.fillStyle = "#E8DCC8";
+    ctx.fillRect(px + p*1.5, py - bodyBob, p*5, p*4);
+
+    // Bandage wraps on head with texture
+    ctx.fillStyle = "#D4C4A8";
+    ctx.fillRect(px + p*1.5, py + p*0.5 - bodyBob, p*5, p*0.7);
+    ctx.fillRect(px + p*1.5, py + p*2 - bodyBob, p*5, p*0.7);
+    ctx.fillRect(px + p*1.5, py + p*3 - bodyBob, p*5, p*0.7);
+
+    // EYES - glowing red
+    ctx.fillStyle = "#FF6B35";
+    ctx.fillRect(px + p*2.5, py + p*1.2 - bodyBob, p*1, p*0.8);
+    ctx.fillRect(px + p*5, py + p*1.2 - bodyBob, p*1, p*0.8);
+
+    // Eye glow effect
+    ctx.fillStyle = "rgba(255, 107, 53, 0.4)";
+    ctx.fillRect(px + p*2.2, py + p*0.8 - bodyBob, p*1.6, p*1.2);
+    ctx.fillRect(px + p*4.7, py + p*0.8 - bodyBob, p*1.6, p*1.2);
+
+    // ARMS - subtle swing
+    ctx.fillStyle = "#E8DCC8";
+    ctx.fillRect(px + p*0.5, py + p*3 - bodyBob + armSwing, p*1.5, p*4);
+    ctx.fillRect(px + p*6, py + p*3 - bodyBob - armSwing, p*1.5, p*4);
+
+    // Bandages on arms
+    ctx.fillStyle = "#D4C4A8";
+    ctx.fillRect(px + p*0.5, py + p*4 - bodyBob + armSwing, p*1.5, p*0.5);
+    ctx.fillRect(px + p*6, py + p*4 - bodyBob - armSwing, p*1.5, p*0.5);
+    ctx.fillRect(px + p*0.5, py + p*5.5 - bodyBob + armSwing, p*1.5, p*0.5);
+    ctx.fillRect(px + p*6, py + p*5.5 - bodyBob - armSwing, p*1.5, p*0.5);
+}
+
+// ================= DETAILED CACTUS ===================
+
+function drawCactus(o) {
+    const p = 4;
+    const y = game.ground - o.height;
+
+    // Main trunk shadow
+    ctx.fillStyle = "#1e8449";
+    ctx.fillRect(o.x + p*3, y + p*1, p*5, o.height - p);
+
+    // Main trunk
+    ctx.fillStyle = "#27ae60";
+    ctx.fillRect(o.x + p*2.5, y, p*5, o.height);
+
+    // Trunk texture - vertical lines
+    ctx.fillStyle = "#229954";
+    ctx.fillRect(o.x + p*3, y + p*0.5, p*0.5, o.height - p);
+    ctx.fillRect(o.x + p*5, y + p*0.5, p*0.5, o.height - p);
+
+    // Trunk highlights
+    ctx.fillStyle = "#2ecc71";
+    ctx.fillRect(o.x + p*3.5, y + p*1, p*1.5, o.height - p*2);
+
+    // Left arm
+    ctx.fillStyle = "#27ae60";
+    ctx.fillRect(o.x, y + p*3, p*3, p*5);
+    ctx.fillRect(o.x + p*1, y + p*2, p*2, p*2);
+    
+    // Left arm texture
+    ctx.fillStyle = "#229954";
+    ctx.fillRect(o.x + p*0.5, y + p*3.5, p*0.4, p*4);
+    
+    // Left arm highlight
+    ctx.fillStyle = "#2ecc71";
+    ctx.fillRect(o.x + p*1, y + p*3.5, p*0.8, p*4);
+
+    // Right arm
+    ctx.fillStyle = "#27ae60";
+    ctx.fillRect(o.x + p*7.5, y + p*4, p*3, p*5);
+    ctx.fillRect(o.x + p*7.5, y + p*3, p*2, p*2);
+
+    // Right arm texture
+    ctx.fillStyle = "#229954";
+    ctx.fillRect(o.x + p*8, y + p*4.5, p*0.4, p*4);
+
+    // Right arm highlight
+    ctx.fillStyle = "#2ecc71";
+    ctx.fillRect(o.x + p*8.5, y + p*4.5, p*0.8, p*4);
+
+    // Spines
+    ctx.fillStyle = "#F4D03F";
+    for (let i = 1; i < (o.height/p) - 1; i += 2) {
+        ctx.fillRect(o.x + p*2.2, y + p*i, p*0.8, p*0.4);
+        ctx.fillRect(o.x + p*7.2, y + p*i, p*0.8, p*0.4);
+    }
+}
+
+// ========== BARREL OBSTACLE ==========
+
+function drawBarrel(o) {
+    const p = 4;
+    const y = game.ground - o.height;
+    
+    // Barrel shadow on ground
+    ctx.fillStyle = "rgba(0,0,0,0.2)";
+    ctx.fillRect(o.x, game.ground, o.width, 3);
+    
+    // Barrel body shadow
+    ctx.fillStyle = "#8B4513";
+    ctx.fillRect(o.x + p*1, y + p*2, p*6, o.height - p*2);
+    
+    // Barrel body
+    ctx.fillStyle = "#A0522D";
+    ctx.fillRect(o.x, y + p*1, p*6, o.height - p);
+    
+    // Wood grain texture
+    ctx.fillStyle = "#8B4513";
+    for (let i = 0; i < 6; i++) {
+        ctx.fillRect(o.x + p*i, y + p*2, p*0.3, o.height - p*3);
+    }
+    
+    // Barrel highlights
+    ctx.fillStyle = "#CD853F";
+    ctx.fillRect(o.x + p*1, y + p*2, p*1.5, o.height - p*4);
+    
+    // Metal bands
+    ctx.fillStyle = "#696969";
+    ctx.fillRect(o.x, y + p*2, p*6, p*0.8);
+    ctx.fillRect(o.x, y + p*5, p*6, p*0.8);
+    
+    // Band highlights
+    ctx.fillStyle = "#A9A9A9";
+    ctx.fillRect(o.x, y + p*2, p*6, p*0.3);
+    ctx.fillRect(o.x, y + p*5, p*6, p*0.3);
+    
+    // Band shadows
+    ctx.fillStyle = "#4a4a4a";
+    ctx.fillRect(o.x, y + p*2.5, p*6, p*0.2);
+    ctx.fillRect(o.x, y + p*5.5, p*6, p*0.2);
+}
+
+// ========== OTHER OBSTACLES ==========
+
+function drawRock(o) {
+    const p = 4;
+    const y = game.ground - o.height;
+    
+    // Rock shadow on ground
+    ctx.fillStyle = "rgba(0,0,0,0.2)";
+    ctx.fillRect(o.x, game.ground, o.width, 3);
+    
+    // Rock shadow
+    ctx.fillStyle = "#5a6266";
+    ctx.fillRect(o.x + p*1, y + p*4, p*7, o.height - p*4);
+    
+    // Main rock
+    ctx.fillStyle = "#7f8c8d";
+    ctx.fillRect(o.x, y + p*3, p*7, o.height - p*3);
+    ctx.fillRect(o.x + p*1.5, y + p*1, p*4, p*3);
+    
+    // Rock texture - cracks
+    ctx.fillStyle = "#5a6266";
+    ctx.fillRect(o.x + p*2, y + p*2, p*3, p*0.5);
+    ctx.fillRect(o.x + p*3, y + p*4, p*0.5, p*3);
+    ctx.fillRect(o.x + p*1, y + p*5, p*4, p*0.5);
+    
+    // Rock highlights
+    ctx.fillStyle = "#95a5a6";
+    ctx.fillRect(o.x + p*1.5, y + p*2, p*2.5, p*2);
+}
+
+function drawSpike(o) {
+    const y = game.ground - o.height;
+    
+    // Spike shadow on ground
+    ctx.fillStyle = "rgba(0,0,0,0.2)";
+    ctx.fillRect(o.x, game.ground, o.width, 3);
+    
+    // Spike shadow
+    ctx.fillStyle = "#c0392b";
+    ctx.beginPath();
+    ctx.moveTo(o.x + 3, game.ground);
+    ctx.lineTo(o.x + 18, y);
+    ctx.lineTo(o.x + 33, game.ground);
+    ctx.fill();
+    
+    // Spike
+    ctx.fillStyle = "#e74c3c";
+    ctx.beginPath();
+    ctx.moveTo(o.x, game.ground);
+    ctx.lineTo(o.x + 15, y);
+    ctx.lineTo(o.x + 30, game.ground);
+    ctx.fill();
+    
+    // Spike highlight
+    ctx.fillStyle = "#ec7063";
+    ctx.beginPath();
+    ctx.moveTo(o.x + 5, game.ground - 10);
+    ctx.lineTo(o.x + 15, y + 5);
+    ctx.lineTo(o.x + 15, game.ground - 10);
+    ctx.fill();
+}
+
+function spawnObstacle() {
+    // Don't spawn obstacles during bird attack
+    if (game.birdActive) return;
+    if (game.frameCount % 85 !== 0) return;
+
+    const type = Math.floor(Math.random() * 4);
+
+    let obj = { x: canvas.width };
+
+    if (type === 0) obj = { ...obj, type:"cactus", width: 42, height: 44 };
+    if (type === 1) obj = { ...obj, type:"rock", width: 32, height: 28 };
+    if (type === 2) obj = { ...obj, type:"spike", width: 30, height: 40 };
+    if (type === 3) obj = { ...obj, type:"barrel", width: 28, height: 32 };
+
+    game.obstacles.push(obj);
+}
+
+function drawObstacle(o) {
+    if (o.type === "cactus") drawCactus(o);
+    if (o.type === "rock")   drawRock(o);
+    if (o.type === "spike")  drawSpike(o);
+    if (o.type === "barrel") drawBarrel(o);
+}
+
+// ========== POWERUPS ==========
+
+function drawShield(pu) {
+    ctx.fillStyle = "#2980b9";
+    ctx.beginPath();
+    ctx.arc(pu.x + 12, pu.y + 12, 12, 0, Math.PI*2);
+    ctx.fill();
+    
+    ctx.fillStyle = "#3498db";
+    ctx.beginPath();
+    ctx.arc(pu.x + 12, pu.y + 12, 10, 0, Math.PI*2);
+    ctx.fill();
+    
+    ctx.fillStyle = "#5dade2";
+    ctx.beginPath();
+    ctx.arc(pu.x + 10, pu.y + 10, 4, 0, Math.PI*2);
+    ctx.fill();
+}
+
+function drawStar(pu) {
+    ctx.fillStyle = "#f39c12";
+    ctx.beginPath();
+    ctx.moveTo(pu.x+10, pu.y);
+    ctx.lineTo(pu.x+14, pu.y+20);
+    ctx.lineTo(pu.x, pu.y+8);
+    ctx.lineTo(pu.x+20, pu.y+8);
+    ctx.lineTo(pu.x+6, pu.y+20);
+    ctx.fill();
+    
+    ctx.fillStyle = "#f1c40f";
+    ctx.beginPath();
+    ctx.moveTo(pu.x+10, pu.y+2);
+    ctx.lineTo(pu.x+13, pu.y+18);
+    ctx.lineTo(pu.x+2, pu.y+9);
+    ctx.lineTo(pu.x+18, pu.y+9);
+    ctx.lineTo(pu.x+7, pu.y+18);
+    ctx.fill();
+}
+
+function spawnPowerup() {
+    if (game.frameCount % 300 !== 0) return;
+    if (Math.random() < 0.6) return;
+
+    game.powerups.push({
+        x: canvas.width,
+        y: game.ground - 90,
+        type: Math.random() < 0.5 ? "shield" : "star"
+    });
+}
+
+// ========== COINS ==========
+
+function drawCoin(coin) {
+    const p = 3;
+    const wobble = Math.sin(game.frameCount * 0.1 + coin.x * 0.01) * 2;
+    const cy = coin.y + wobble;
+    
+    // Coin shadow
+    ctx.fillStyle = "rgba(0,0,0,0.2)";
+    ctx.beginPath();
+    ctx.ellipse(coin.x + p*2, game.ground, p*2, p*0.5, 0, 0, Math.PI*2);
+    ctx.fill();
+    
+    // Outer ring (darker gold)
+    ctx.fillStyle = "#D4AF37";
+    ctx.beginPath();
+    ctx.arc(coin.x + p*2, cy, p*2, 0, Math.PI*2);
+    ctx.fill();
+    
+    // Inner circle (bright gold)
+    ctx.fillStyle = "#FFD700";
+    ctx.beginPath();
+    ctx.arc(coin.x + p*2, cy, p*1.5, 0, Math.PI*2);
+    ctx.fill();
+    
+    // Highlight
+    ctx.fillStyle = "#FFF4A3";
+    ctx.beginPath();
+    ctx.arc(coin.x + p*1.5, cy - p*0.5, p*0.8, 0, Math.PI*2);
+    ctx.fill();
+    
+    // Center dot (Egyptian symbol)
+    ctx.fillStyle = "#D4AF37";
+    ctx.fillRect(coin.x + p*1.7, cy - p*0.3, p*0.6, p*0.6);
+}
+
+function spawnCoin() {
+    if (game.frameCount % 60 !== 0) return;
+    if (Math.random() < 0.5) return;
+
+    const pattern = Math.random();
+    
+    if (pattern < 0.5) {
+        // Single coin
+        game.coins.push({
+            x: canvas.width,
+            y: game.ground - 60 - Math.random() * 40,
+            width: 18,
+            height: 18
+        });
+    } else {
+        // Line of 3-5 coins
+        const count = 3 + Math.floor(Math.random() * 3);
+        const yPos = game.ground - 60 - Math.random() * 40;
+        for (let i = 0; i < count; i++) {
+            game.coins.push({
+                x: canvas.width + (i * 30),
+                y: yPos,
+                width: 18,
+                height: 18
+            });
+        }
+    }
+}
+
+function drawPowerup(pu) {
+    if (pu.type === "shield") drawShield(pu);
+    if (pu.type === "star") drawStar(pu);
+}
+
+// ========== BIRD ATTACK ==========
+
+function drawBird(bird) {
+    const p = 4;
+    const wingFlap = Math.sin(game.frameCount * 0.3) * 3;
+    
+    // Bird outline
+    ctx.fillStyle = "#000";
+    ctx.fillRect(bird.x - 1, bird.y - 1, p*8 + 2, p*6 + 2);
+    
+    // Body
+    ctx.fillStyle = "#8B4513";
+    ctx.fillRect(bird.x + p*2, bird.y + p*1, p*4, p*4);
+    
+    // Head
+    ctx.fillStyle = "#A0522D";
+    ctx.fillRect(bird.x + p*5, bird.y, p*3, p*3);
+    
+    // Beak
+    ctx.fillStyle = "#FFD700";
+    ctx.fillRect(bird.x + p*8, bird.y + p*1, p*2, p*1);
+    
+    // Eye (red and menacing)
+    ctx.fillStyle = "#FF0000";
+    ctx.fillRect(bird.x + p*6, bird.y + p*1, p*1, p*1);
+    
+    // Wings
+    ctx.fillStyle = "#654321";
+    ctx.fillRect(bird.x, bird.y + p*2 + wingFlap, p*3, p*2);
+    ctx.fillRect(bird.x + p*6, bird.y + p*2 - wingFlap, p*3, p*2);
+    
+    // Tail feathers
+    ctx.fillRect(bird.x, bird.y + p*3, p*2, p*2);
+}
+
+function drawLaser(bird) {
+    // Laser beam
+    ctx.fillStyle = "#FF0000";
+    ctx.fillRect(bird.x + 16, bird.y + 12, canvas.width - bird.x - 16, 4);
+    
+    // Laser glow
+    ctx.fillStyle = "rgba(255, 0, 0, 0.3)";
+    ctx.fillRect(bird.x + 16, bird.y + 10, canvas.width - bird.x - 16, 8);
+    
+    // Laser core (brighter)
+    ctx.fillStyle = "#FF6666";
+    ctx.fillRect(bird.x + 16, bird.y + 13, canvas.width - bird.x - 16, 2);
+}
+
+function spawnBird() {
+    // Spawn bird every 15 seconds
+    if (game.frameCount % 900 !== 0) return;
+    if (Math.random() < 0.3) return;
+    
+    game.bird = {
+        x: canvas.width,
+        y: -50,
+        targetY: 80,
+        phase: 'entering', // entering, charging, shooting, leaving
+        timer: 0
+    };
+    game.birdActive = true;
+}
+
+function updateBird() {
+    if (!game.bird) return;
+    
+    const bird = game.bird;
+    bird.timer++;
+    
+    if (bird.phase === 'entering') {
+        // Fly in from right
+        bird.x -= 3;
+        // Descend to target height
+        if (bird.y < bird.targetY) {
+            bird.y += 2;
+        }
+        
+        // Once in position
+        if (bird.x <= canvas.width - 150 && bird.y >= bird.targetY) {
+            bird.phase = 'charging';
+            bird.timer = 0;
+        }
+    }
+    else if (bird.phase === 'charging') {
+        // Hover and charge for 1 second
+        bird.y += Math.sin(game.frameCount * 0.1) * 0.5;
+        
+        if (bird.timer > 60) {
+            bird.phase = 'shooting';
+            bird.timer = 0;
+        }
+    }
+    else if (bird.phase === 'shooting') {
+        // Shoot laser for 2 seconds
+        bird.y += Math.sin(game.frameCount * 0.1) * 0.5;
+        
+        // Check if laser hits player (if not ducking)
+        const currentHeight = player.ducking ? player.duckHeight : player.height;
+        const laserY = bird.y + 12;
+        
+        if (!player.ducking && 
+            laserY >= player.y && 
+            laserY <= player.y + currentHeight &&
+            bird.x < player.x + player.width) {
+            gameState = "gameover";
+            if (score > highScore) highScore = score;
+        }
+        
+        if (bird.timer > 120) {
+            bird.phase = 'leaving';
+            bird.timer = 0;
+        }
+    }
+    else if (bird.phase === 'leaving') {
+        // Fly away
+        bird.x -= 4;
+        bird.y -= 1;
+        
+        if (bird.x < -100) {
+            game.bird = null;
+            game.birdActive = false;
+        }
+    }
+}
+
+// ========== DESERT BACKGROUND ==========
+
+function drawPyramid(x, y, size) {
+    const height = size * 0.6; // Make pyramids wider and shorter
+    
+    // Pyramid shadow
+    ctx.fillStyle = "#C4A053";
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + size/2 + 5, y - height + 5);
+    ctx.lineTo(x + size + 10, y);
+    ctx.fill();
+    
+    // Left face (darker)
+    ctx.fillStyle = "#D4A574";
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + size/2, y - height);
+    ctx.lineTo(x + size/2, y);
+    ctx.fill();
+    
+    // Right face (lighter)
+    ctx.fillStyle = "#E8C798";
+    ctx.beginPath();
+    ctx.moveTo(x + size/2, y - height);
+    ctx.lineTo(x + size, y);
+    ctx.lineTo(x + size/2, y);
+    ctx.fill();
+    
+    // Stone block texture on left face
+    ctx.fillStyle = "#C4A464";
+    for (let i = 0; i < 8; i++) {
+        const blockY = y - (i * height/9);
+        const blockWidth = (size/2) * (1 - i/9);
+        for (let j = 0; j < 3 + i; j++) {
+            const blockX = x + (size/2 - blockWidth) + (j * blockWidth/(3+i));
+            ctx.fillRect(blockX, blockY, blockWidth/(4+i), 1.5);
+        }
+    }
+    
+    // Stone block texture on right face
+    ctx.fillStyle = "#D4B484";
+    for (let i = 0; i < 8; i++) {
+        const blockY = y - (i * height/9);
+        const blockWidth = (size/2) * (1 - i/9);
+        for (let j = 0; j < 3 + i; j++) {
+            const blockX = x + size/2 + (j * blockWidth/(3+i));
+            ctx.fillRect(blockX, blockY, blockWidth/(4+i), 1.5);
+        }
+    }
+}
+
+function drawPyramids() {
+    const scrollOffset = game.frameCount * game.speed * 0.3;
+    
+    // Far pyramids (smaller, slower)
+    const far1 = 100 + ((scrollOffset * 0.2) % 1200);
+    const far2 = 100 + ((scrollOffset * 0.2 + 600) % 1200);
+    if (far1 < canvas.width + 200) drawPyramid(canvas.width + 200 - far1, game.ground, 100);
+    if (far2 < canvas.width + 200) drawPyramid(canvas.width + 200 - far2, game.ground, 120);
+    
+    // Mid pyramids
+    const mid1 = 140 + ((scrollOffset * 0.4) % 1400);
+    const mid2 = 140 + ((scrollOffset * 0.4 + 700) % 1400);
+    if (mid1 < canvas.width + 200) drawPyramid(canvas.width + 200 - mid1, game.ground, 140);
+    if (mid2 < canvas.width + 200) drawPyramid(canvas.width + 200 - mid2, game.ground, 130);
+    
+    // Near pyramid (larger, faster)
+    const near1 = 160 + ((scrollOffset * 0.6) % 1000);
+    if (near1 < canvas.width + 200) drawPyramid(canvas.width + 200 - near1, game.ground, 160);
+}
+
+function drawSun() {
+    // Sun glow
+    ctx.fillStyle = "rgba(255, 200, 100, 0.3)";
+    ctx.beginPath();
+    ctx.arc(680, 80, 55, 0, Math.PI*2);
+    ctx.fill();
+    
+    // Sun
+    ctx.fillStyle = "#FDB813";
+    ctx.beginPath();
+    ctx.arc(680, 80, 45, 0, Math.PI*2);
+    ctx.fill();
+    
+    // Sun highlight
+    ctx.fillStyle = "#FFDB58";
+    ctx.beginPath();
+    ctx.arc(670, 70, 20, 0, Math.PI*2);
+    ctx.fill();
+}
+
+function drawDetailedSand() {
+    // Base sand color
+    ctx.fillStyle = "#EDC9A3";
+    ctx.fillRect(0, game.ground, canvas.width, canvas.height - game.ground);
+    
+    const scrollOffset = game.frameCount * game.speed;
+    
+    // Dark sand layer (back layer)
+    ctx.fillStyle = "#D4A574";
+    for (let i = 0; i < canvas.width + 40; i += 40) {
+        const x = i - (scrollOffset * 0.7 % 40);
+        ctx.fillRect(x, game.ground, 20, 8);
+        ctx.fillRect(x + 8, game.ground + 8, 15, 6);
+        ctx.fillRect(x + 5, game.ground + 15, 12, 5);
+    }
+    
+    // Medium sand patches (middle layer)
+    ctx.fillStyle = "#E0B88B";
+    for (let i = 0; i < canvas.width + 50; i += 50) {
+        const x = i - (scrollOffset % 50);
+        ctx.fillRect(x + 5, game.ground + 2, 18, 6);
+        ctx.fillRect(x + 12, game.ground + 9, 14, 7);
+        ctx.fillRect(x + 8, game.ground + 17, 10, 5);
+    }
+    
+    // Light sand highlights (top layer)
+    ctx.fillStyle = "#F5DDB8";
+    for (let i = 0; i < canvas.width + 35; i += 35) {
+        const x = i - (scrollOffset * 1.3 % 35);
+        ctx.fillRect(x + 3, game.ground + 1, 12, 4);
+        ctx.fillRect(x + 10, game.ground + 6, 10, 5);
+        ctx.fillRect(x + 6, game.ground + 12, 8, 4);
+    }
+    
+    // Small pebbles and rocks
+    ctx.fillStyle = "#A89078";
+    for (let i = 0; i < canvas.width + 60; i += 60) {
+        const x = i - (scrollOffset * 0.85 % 60);
+        ctx.fillRect(x + 15, game.ground + 3, 3, 2);
+        ctx.fillRect(x + 25, game.ground + 10, 4, 3);
+        ctx.fillRect(x + 35, game.ground + 18, 2, 2);
+    }
+    
+    // Sand grain detail (tiny dots)
+    ctx.fillStyle = "#C4A574";
+    for (let i = 0; i < canvas.width + 25; i += 25) {
+        const x = i - (scrollOffset * 1.5 % 25);
+        ctx.fillRect(x + 5, game.ground + 4, 1, 1);
+        ctx.fillRect(x + 12, game.ground + 8, 1, 1);
+        ctx.fillRect(x + 18, game.ground + 14, 1, 1);
+        ctx.fillRect(x + 8, game.ground + 20, 1, 1);
+    }
+}
+
+// ========== UPDATE ==========
+
+function update() {
+    if (gameState !== "playing") return;
+
+    game.frameCount++;
+
+    if (game.frameCount % 300 === 0) game.speed += 0.4;
+
+    spawnObstacle();
+    spawnPowerup();
+    spawnCoin();
+    spawnBird();
+    updateBird();
+
+    player.vy += game.gravity;
+    player.y += player.vy;
+
+    if (player.y >= game.ground - player.height) {
+        player.y = game.ground - player.height;
+        player.vy = 0;
+        player.jumping = false;
+    }
+
+    game.obstacles = game.obstacles.filter(o => {
+        o.x -= game.speed;
+
+        // Adjusted collision box for better accuracy
+        const playerBox = {
+            x: player.x + 4,
+            y: player.y + 2,
+            width: player.width - 8,
+            height: player.height - 2
+        };
+
+        if (
+            playerBox.x < o.x + o.width &&
+            playerBox.x + playerBox.width > o.x &&
+            playerBox.y < game.ground &&
+            playerBox.y + playerBox.height > game.ground - o.height
+        ) {
+            gameState = "gameover";
+            if (score > highScore) highScore = score;
+        }
+
+        return o.x > -50;
+    });
+
+    game.powerups = game.powerups.filter(pu => {
+        pu.x -= game.speed;
+        return pu.x > -50;
+    });
+
+    game.coins = game.coins.filter(coin => {
+        coin.x -= game.speed;
+        
+        // Check coin collection
+        if (
+            player.x < coin.x + coin.width &&
+            player.x + player.width > coin.x &&
+            player.y < coin.y + coin.height &&
+            player.y + player.height > coin.y
+        ) {
+            game.coinScore += 10;
+            return false; // Remove coin
+        }
+        
+        return coin.x > -50;
+    });
+
+    score = Math.floor(game.frameCount / 10);
+}
+
+// ========== DRAW ==========
+
+function draw() {
+    // Desert sky gradient
+    const gradient = ctx.createLinearGradient(0, 0, 0, game.ground);
+    gradient.addColorStop(0, "#87CEEB");
+    gradient.addColorStop(0.5, "#B4D7E8");
+    gradient.addColorStop(1, "#E8D5B8");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    drawSun();
+    drawPyramids();
+    drawDetailedSand();
+
+    // Draw bird and laser if active
+    if (game.bird) {
+        if (game.bird.phase === 'shooting') {
+            drawLaser(game.bird);
+        }
+        drawBird(game.bird);
+    }
+
+    game.coins.forEach(drawCoin);
+    game.obstacles.forEach(drawObstacle);
+    game.powerups.forEach(drawPowerup);
+
+    drawMummy();
+
+    // Score display with coins
+    ctx.fillStyle = "#000";
+    ctx.font = "bold 24px monospace";
+    ctx.fillText("Score: " + score, 20, 35);
+    
+    // Coin counter
+    ctx.fillStyle = "#FFD700";
+    ctx.font = "bold 24px monospace";
+    ctx.fillText("🪙 " + game.coinScore, 20, 65);
+
+    if (gameState === "menu") {
+        ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        ctx.fillStyle = "#E8DCC8";
+        ctx.font = "bold 48px monospace";
+        ctx.fillText("MUMMY RUNNER", 220, 150);
+
+        ctx.fillStyle = "#fff";
+        ctx.font = "22px monospace";
+        ctx.fillText("Click or press SPACE to start", 210, 220);
+        ctx.font = "18px monospace";
+        ctx.fillText("Press DOWN or S to duck", 260, 250);
+    }
+
+    if (gameState === "gameover") {
+        ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        ctx.fillStyle = "#E74C3C";
+        ctx.font = "bold 52px monospace";
+        ctx.fillText("GAME OVER", 240, 160);
+
+        ctx.fillStyle = "#fff";
+        ctx.font = "28px monospace";
+        ctx.fillText("Score: " + score, 320, 220);
+        ctx.fillText("High Score: " + highScore, 270, 260);
+        
+        ctx.font = "20px monospace";
+        ctx.fillText("Click or press SPACE to restart", 200, 310);
+    }
+}
+
+// ========== GAME LOOP ==========
+
+function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+}
+loop();
+
+</script>
+</body>
+</html>
