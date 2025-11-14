@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>8-Bit Endless Runner</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            font-family: 'Courier New', monospace;
+        }
+        
+        .game-container {
+            text-align: center;
+        }
+        
+        canvas {
+            border: 4px solid #0f3460;
+            border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        
+        .instructions {
+            color: #94a3b8;
+            margin-top: 20px;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <canvas id="gameCanvas" width="800" height="500"></canvas>
+        <div class="instructions">SPACE: Jump over green obstacles | DOWN: Duck under red obstacles | Portals: Change lanes</div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Game state
+        let gameState = 'menu'; // menu, playing, gameover
+        let score = 0;
+        let highScore = 0;
+        
+        // Lane system
+        const lanes = [
+            { y: 100, ground: 150 },  // Top lane
+            { y: 225, ground: 275 },  // Middle lane
+            { y: 350, ground: 400 }   // Bottom lane
+        ];
+        
+        // Game object
+        const game = {
+            player: {
+                x: 100,
+                width: 32,
+                height: 32,
+                velocityY: 0,
+                isJumping: false,
+                currentLane: 1,  // Start in middle lane
+                targetLane: 1,
+                laneTransition: 0
+            },
+            obstacles: [],
+            powerups: [],
+            portals: [],
+            speed: 5,
+            gravity: 0.6,
+            jumpForce: -12,
+            frameCount: 0,
+            invincible: false,
+            invincibleTimer: 0,
+            portalImmunity: false,
+            portalImmunityTimer: 0
+        };
+
+        // Initialize player position
+        game.player.y = lanes[1].ground - game.player.height;
+
+        // Input handling
+        let keys = {};
+        
+        window.addEventListener('keydown', (e) => {
+            keys[e.code] = true;
+            
+            if (e.code === 'Space') {
+                e.preventDefault();
+                if (gameState === 'menu' || gameState === 'gameover') {
+                    startGame();
+                } else if (gameState === 'playing') {
+                    jump();
+                }
+            }
+            
+            if (e.code === 'ArrowDown' && gameState === 'playing' && !game.player.isJumping) {
+                isDucking = true;
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            keys[e.code] = false;
+            
+            if (e.code === 'ArrowDown') {
+                isDucking = false;
+            }
+        });
+
+        canvas.addEventListener('click', () => {
+            if (gameState === 'menu' || gameState === 'gameover') {
+                startGame();
+            } else if (gameState === 'playing') {
+                jump();
+            }
+        });
+
+        // Add ducking control
+        let isDucking = false;
+
+        function startGame() {
+            game.player.currentLane = 1;
+            game.player.targetLane = 1;
+            game.player.laneTransition = 0;
+            game.player.y = lanes[1].ground - game.player.height;
+            game.player.velocityY = 0;
+            game.player.isJumping = false;
+            game.obstacles = [];
+            game.powerups = [];
+            game.portals = [];
+            game.speed = 5;
+            game.frameCount = 0;
+            game.invincible = false;
+            game.invincibleTimer = 0;
+            score = 0;
+            gameState = 'playing';
+        }
+
+        function jump() {
+            if (!game.player.isJumping && game.player.currentLane === game.player.targetLane) {
+                game.player.velocityY = game.jumpForce;
+                game.player.isJumping = true;
+            }
+        }
+
+        // Drawing functions
+        function drawPixelRect(x, y, w, h, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(Math.floor(x), Math.floor(y), w, h);
+        }
+
+        function drawPlayer() {
+            const p = game.player;
+            
+            // When ducking: height becomes 20px, and we add 12px yOffset
+            // This means: standing player top is at p.y, ducking player top is at p.y + 12
+            // Standing: p.y to p.y + 32 (ground - 32 to ground)
+            // Ducking: p.y + 12 to p.y + 32 (ground - 20 to ground)
+            const height = isDucking && !p.isJumping ? 20 : 32;
+            const yOffset = isDucking && !p.isJumping ? 12 : 0;
+            
+            // Body - flashing colors when invincible or portal immunity
+            if (game.invincible || game.portalImmunity) {
+                const colors = game.portalImmunity ? ['#FF00FF', '#FF69B4', '#DA70D6'] : ['#FFD700', '#FFA500', '#FF6347'];
+                const colorIndex = Math.floor(game.frameCount / 5) % colors.length;
+                drawPixelRect(p.x, p.y + yOffset, 32, height, colors[colorIndex]);
+            } else {
+                drawPixelRect(p.x, p.y + yOffset, 32, height, '#FF6B6B');
+            }
+            
+            // Eyes
+            drawPixelRect(p.x + 8, p.y + 8 + yOffset, 6, 6, '#000');
+            drawPixelRect(p.x + 18, p.y + 8 + yOffset, 6, 6, '#000');
+            
+            // Legs animation (only if not ducking)
+            if (!isDucking || p.isJumping) {
+                const legOffset = Math.floor(game.frameCount / 5) % 2 * 4;
+                drawPixelRect(p.x + 6, p.y + 28, 8, 4, '#FF4757');
+                drawPixelRect(p.x + 18, p.y + 28 + legOffset, 8, 4, '#FF4757');
+            }
+        }
+
+        function drawObstacle(obs) {
+            if (obs.type === 'ground') {
+                // Cactus-like obstacle (jump over)
+                drawPixelRect(obs.x, obs.y, 24, 40, '#2ECC71');
+                drawPixelRect(obs.x + 8, obs.y + 8, 8, 24, '#27AE60');
+                drawPixelRect(obs.x, obs.y + 16, 8, 8, '#2ECC71');
+                drawPixelRect(obs.x + 16, obs.y + 16, 8, 8, '#2ECC71');
+            } else {
+                // Flying obstacle (duck under) - bigger and more threatening
+                drawPixelRect(obs.x, obs.y, 32, 24, '#E74C3C');
+                drawPixelRect(obs.x + 4, obs.y + 4, 24, 16, '#C0392B');
+                // Wings
+                drawPixelRect(obs.x - 4, obs.y + 10, 8, 4, '#E74C3C');
+                drawPixelRect(obs.x + 28, obs.y + 10, 8, 4, '#E74C3C');
+            }
+        }
+
+        function drawPowerup(pu) {
+            const pulse = Math.sin(game.frameCount * 0.1) * 2;
+            drawPixelRect(pu.x, pu.y + pulse, 20, 20, '#FFD700');
+            drawPixelRect(pu.x + 4, pu.y + 4 + pulse, 12, 12, '#FFA500');
+            drawPixelRect(pu.x + 8, pu.y + 8 + pulse, 4, 4, '#FF6347');
+        }
+
+        function drawPortal(portal) {
+            const swirl = Math.sin(game.frameCount * 0.2) * 3;
+            
+            // Outer ring
+            drawPixelRect(portal.x, portal.y, 40, 50, '#8B0000');
+            drawPixelRect(portal.x + 4, portal.y + 4, 32, 42, '#FF0000');
+            
+            // Inner swirl effect
+            drawPixelRect(portal.x + 8, portal.y + 8 + swirl, 24, 34, '#DC143C');
+            drawPixelRect(portal.x + 12, portal.y + 12 + swirl, 16, 26, '#FF6347');
+            
+            // Center
+            const centerPulse = Math.sin(game.frameCount * 0.15) * 2;
+            drawPixelRect(portal.x + 16, portal.y + 20 + centerPulse, 8, 10, '#FFD700');
+        }
+
+        function drawLanes() {
+            // Draw lane dividers and grounds
+            for (let i = 0; i < lanes.length; i++) {
+                const lane = lanes[i];
+                
+                // Ground
+                drawPixelRect(0, lane.ground, canvas.width, 50, '#8B4513');
+                
+                // Ground pattern
+                for (let j = 0; j < canvas.width; j += 16) {
+                    const offset = (game.frameCount * game.speed) % 16;
+                    drawPixelRect(j - offset, lane.ground, 8, 8, '#654321');
+                }
+                
+                // Lane divider line (except after last lane)
+                if (i < lanes.length - 1) {
+                    const dividerY = lane.ground + 50;
+                    for (let j = 0; j < canvas.width; j += 30) {
+                        const offset = (game.frameCount * game.speed) % 30;
+                        drawPixelRect(j - offset, dividerY, 15, 3, '#FFD700');
+                    }
+                }
+            }
+        }
+
+        function drawClouds() {
+            for (let i = 0; i < 5; i++) {
+                const x = ((game.frameCount * 1.5 + i * 180) % (canvas.width + 100)) - 50;
+                const y = 20 + (i % 3) * 25;
+                drawPixelRect(x, y, 40, 16, '#ECF0F1');
+                drawPixelRect(x + 8, y - 8, 24, 16, '#ECF0F1');
+            }
+        }
+
+        function drawUI() {
+            ctx.fillStyle = '#2C3E50';
+            ctx.font = 'bold 20px monospace';
+            ctx.fillText('Score: ' + score, 20, 30);
+            
+            if (game.invincible) {
+                const timeLeft = Math.ceil(game.invincibleTimer / 60);
+                ctx.fillStyle = '#FFD700';
+                ctx.fillText('Shield: ' + timeLeft + 's', 20, 60);
+            }
+            
+            if (game.portalImmunity) {
+                const timeLeft = Math.ceil(game.portalImmunityTimer / 60);
+                ctx.fillStyle = '#FF00FF';
+                ctx.fillText('Portal Shield: ' + timeLeft + 's', 20, 90);
+            }
+        }
+
+        // Game logic
+        function update() {
+            if (gameState !== 'playing') return;
+
+            game.frameCount++;
+
+            // Handle lane transition
+            if (game.player.currentLane !== game.player.targetLane) {
+                game.player.laneTransition += 0.15;
+                if (game.player.laneTransition >= 1) {
+                    game.player.currentLane = game.player.targetLane;
+                    game.player.laneTransition = 0;
+                }
+                
+                // Interpolate position
+                const currentLaneY = lanes[game.player.currentLane].ground - game.player.height;
+                const targetLaneY = lanes[game.player.targetLane].ground - game.player.height;
+                game.player.y = currentLaneY + (targetLaneY - currentLaneY) * game.player.laneTransition;
+            }
+
+            // Update player (jumping)
+            if (game.player.isJumping || game.player.velocityY !== 0) {
+                game.player.velocityY += game.gravity;
+                game.player.y += game.player.velocityY;
+
+                const currentGround = lanes[game.player.currentLane].ground - game.player.height;
+                if (game.player.y >= currentGround) {
+                    game.player.y = currentGround;
+                    game.player.velocityY = 0;
+                    game.player.isJumping = false;
+                }
+            }
+
+            // Spawn obstacles (one per lane periodically) - MORE FREQUENT
+            if (game.frameCount % 60 === 0) {
+                const randomLane = Math.floor(Math.random() * 3);
+                const obstacleType = Math.random() > 0.5 ? 'ground' : 'air';
+                
+                if (obstacleType === 'ground') {
+                    game.obstacles.push({
+                        x: canvas.width,
+                        y: lanes[randomLane].ground - 40,
+                        width: 24,
+                        height: 40,
+                        lane: randomLane,
+                        type: 'ground'
+                    });
+                } else {
+                    // Flying obstacle - positioned to hit standing/jumping player but not ducking player
+                    // Standing player: ground - 32 to ground (top at ground-32, bottom at ground)
+                    // Ducking player: ground - 20 to ground (top at ground-20, bottom at ground)  
+                    // So obstacle at ground-32 to ground-12 will hit standing (covers ground-32 to ground-12)
+                    // but miss ducking (which only goes up to ground-20)
+                    game.obstacles.push({
+                        x: canvas.width,
+                        y: lanes[randomLane].ground - 30, // Slightly below head height
+                        width: 32,
+                        height: 18, // Covers the upper body area
+                        lane: randomLane,
+                        type: 'air'
+                    });
+                }
+            }
+
+            // Spawn powerups
+            if (game.frameCount % 350 === 0 && Math.random() > 0.5) {
+                const randomLane = Math.floor(Math.random() * 3);
+                game.powerups.push({
+                    x: canvas.width,
+                    y: lanes[randomLane].ground - 70,
+                    width: 20,
+                    height: 20,
+                    lane: randomLane
+                });
+            }
+
+            // Spawn portals (always on ground, easy to reach) - teleport to random lane
+            if (game.frameCount % 200 === 0 && Math.random() > 0.3) {
+                const spawnLane = Math.floor(Math.random() * 3);
+                
+                game.portals.push({
+                    x: canvas.width,
+                    y: lanes[spawnLane].ground - 50,
+                    width: 40,
+                    height: 50,
+                    spawnLane: spawnLane
+                });
+            }
+
+            // Update portals FIRST (check BEFORE obstacles to prevent death)
+            let portalUsed = false;
+            game.portals = game.portals.filter(portal => {
+                portal.x -= game.speed;
+                
+                // Collision detection for portal (works from any lane player is on)
+                if (!portalUsed &&
+                    game.player.currentLane === portal.spawnLane &&
+                    game.player.x < portal.x + portal.width &&
+                    game.player.x + game.player.width > portal.x &&
+                    game.player.y < portal.y + portal.height &&
+                    game.player.y + game.player.height > portal.y) {
+                    // Teleport player to random lane (MUST be different from current)
+                    let newLane = Math.floor(Math.random() * 3);
+                    while (newLane === game.player.currentLane) {
+                        newLane = Math.floor(Math.random() * 3);
+                    }
+                    game.player.currentLane = newLane;
+                    game.player.targetLane = newLane;
+                    game.player.y = lanes[newLane].ground - game.player.height;
+                    game.player.velocityY = 0;
+                    game.player.isJumping = false;
+                    game.player.laneTransition = 0;
+                    portalUsed = true;
+                    // Grant portal immunity for 2 seconds
+                    game.portalImmunity = true;
+                    game.portalImmunityTimer = 120; // 2 seconds at 60fps
+                    return false;
+                }
+                
+                return portal.x > -portal.width;
+            });
+
+            // Update obstacles AFTER portals
+            game.obstacles = game.obstacles.filter(obs => {
+                obs.x -= game.speed;
+                
+                // Get player collision box (adjusted for ducking)
+                const playerHeight = isDucking && !game.player.isJumping ? 20 : 32;
+                const playerY = isDucking && !game.player.isJumping ? game.player.y + 12 : game.player.y;
+                
+                // Collision detection (only in same lane and not immune)
+                if (!game.invincible && !game.portalImmunity &&
+                    game.player.currentLane === obs.lane &&
+                    game.player.x < obs.x + obs.width &&
+                    game.player.x + game.player.width > obs.x &&
+                    playerY < obs.y + obs.height &&
+                    playerY + playerHeight > obs.y) {
+                    gameState = 'gameover';
+                    if (score > highScore) {
+                        highScore = score;
+                    }
+                    return false;
+                }
+                
+                return obs.x > -obs.width;
+            });
+
+            // Update powerups
+            game.powerups = game.powerups.filter(pu => {
+                pu.x -= game.speed;
+                
+                // Collision detection for powerup (only in same lane)
+                if (game.player.currentLane === pu.lane &&
+                    game.player.x < pu.x + pu.width &&
+                    game.player.x + game.player.width > pu.x &&
+                    game.player.y < pu.y + pu.height &&
+                    game.player.y + game.player.height > pu.y) {
+                    game.invincible = true;
+                    game.invincibleTimer = 300;
+                    return false;
+                }
+                
+                return pu.x > -pu.width;
+            });
+
+            // Update invincibility
+            if (game.invincible) {
+                game.invincibleTimer--;
+                if (game.invincibleTimer <= 0) {
+                    game.invincible = false;
+                }
+            }
+            
+            // Update portal immunity
+            if (game.portalImmunity) {
+                game.portalImmunityTimer--;
+                if (game.portalImmunityTimer <= 0) {
+                    game.portalImmunity = false;
+                }
+            }
+
+            // Increase difficulty
+            if (game.frameCount % 400 === 0 && game.speed < 12) {
+                game.speed += 0.3;
+            }
+
+            // Update score
+            score = Math.floor(game.frameCount / 10);
+        }
+
+        function draw() {
+            // Clear canvas with sky color
+            ctx.fillStyle = '#87CEEB';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            if (gameState === 'menu') {
+                drawClouds();
+                drawLanes();
+                
+                ctx.fillStyle = '#2C3E50';
+                ctx.font = 'bold 48px monospace';
+                ctx.fillText('PIXEL RUNNER', canvas.width / 2 - 180, canvas.height / 2 - 80);
+                ctx.font = '24px monospace';
+                ctx.fillText('Click or Press SPACE to Start', canvas.width / 2 - 180, canvas.height / 2 - 20);
+                ctx.font = '18px monospace';
+                ctx.fillText('SPACE: Jump over green obstacles', canvas.width / 2 - 160, canvas.height / 2 + 20);
+                ctx.fillText('DOWN: Duck under red flying obstacles', canvas.width / 2 - 175, canvas.height / 2 + 45);
+                ctx.fillText('Red Portals: Teleport to different lane!', canvas.width / 2 - 180, canvas.height / 2 + 70);
+                
+            } else if (gameState === 'playing') {
+                drawClouds();
+                drawLanes();
+                
+                game.obstacles.forEach(drawObstacle);
+                game.powerups.forEach(drawPowerup);
+                game.portals.forEach(drawPortal);
+                drawPlayer();
+                drawUI();
+                
+            } else if (gameState === 'gameover') {
+                drawClouds();
+                drawLanes();
+                
+                ctx.fillStyle = '#E74C3C';
+                ctx.font = 'bold 48px monospace';
+                ctx.fillText('GAME OVER', canvas.width / 2 - 150, canvas.height / 2 - 40);
+                ctx.fillStyle = '#2C3E50';
+                ctx.font = '24px monospace';
+                ctx.fillText('Score: ' + score, canvas.width / 2 - 70, canvas.height / 2 + 10);
+                ctx.fillText('High Score: ' + highScore, canvas.width / 2 - 100, canvas.height / 2 + 45);
+                ctx.font = '20px monospace';
+                ctx.fillText('Click or Press SPACE to Restart', canvas.width / 2 - 180, canvas.height / 2 + 90);
+            }
+        }
+
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Start the game loop
+        gameLoop();
+    </script>
+</body>
+</html>
