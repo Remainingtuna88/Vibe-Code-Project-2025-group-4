@@ -1,0 +1,1566 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>32-Bit Mummy Runner</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #0a0e1a 0%, #1a1f2e 100%);
+            font-family: 'Courier New', monospace;
+        }
+        
+        .game-container {
+            text-align: center;
+        }
+        
+        canvas {
+            border: 6px solid #2d3748;
+            border-radius: 12px;
+            box-shadow: 0 15px 60px rgba(0, 0, 0, 0.8),
+                        0 0 30px rgba(100, 150, 255, 0.3);
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        
+        .instructions {
+            color: #a0aec0;
+            margin-top: 25px;
+            font-size: 16px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+        }
+        
+        .stats {
+            margin-top: 15px;
+            color: #cbd5e0;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <canvas id="gameCanvas" width="1000" height="600"></canvas>
+        <div class="instructions">SPACE: Jump | DOWN: Duck | Collect Powerups | Find Portals</div>
+        <div class="stats" id="stats">Theme: Default | Distance: 0m</div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = false;
+        
+        // Game state
+        let gameState = 'menu';
+        let score = 0;
+        let highScore = 0;
+        let distance = 0;
+        
+        // Lane system
+        const lanes = [
+            { y: 120, ground: 180 },
+            { y: 280, ground: 340 },
+            { y: 440, ground: 500 }
+        ];
+        
+        // Particle system
+        const particles = [];
+        
+        // Game object
+        const game = {
+            player: {
+                x: 120,
+                width: 38,
+                height: 48,
+                velocityY: 0,
+                isJumping: false,
+                currentLane: 1,
+                targetLane: 1,
+                laneTransition: 0,
+                frame: 0,
+                walkCycle: 0,
+                duckHeight: 26,
+                baseSpeed: 6,
+                currentSpeed: 6,
+                acceleration: 0.002
+            },
+            obstacles: [],
+            powerups: [],
+            portals: [],
+            coins: [],
+            speed: 6,
+            gravity: 0.7,
+            jumpForce: -13,
+            frameCount: 0,
+            invincible: false,
+            invincibleTimer: 0,
+            portalImmunity: false,
+            portalImmunityTimer: 0,
+            speedBoost: false,
+            speedBoostTimer: 0,
+            slowdown: false,
+            slowdownTimer: 0,
+            scoreMultiplier: 1,
+            scoreMultiplierTimer: 0,
+            coinCount: 0,
+            theme: 'default',
+            themeColors: {
+                default: {
+                    sky: ['#87CEEB', '#B0D8F0', '#E0F4FF'],
+                    ground: ['#8B4513', '#A0522D', '#6B3410'],
+                    groundPattern: '#654321',
+                    clouds: ['#FFFFFF', '#F0F8FF', '#E6F3FF'],
+                    player: '#E8DCC8',
+                    obstacle: ['#2ECC71', '#27AE60', '#229954'],
+                    powerup: '#FFD700',
+                    accent: '#FF6B6B'
+                },
+                jungle: {
+                    sky: ['#88d498', '#A8E6B8', '#C8F0D8'],
+                    ground: ['#3C7D3B', '#2E6A2F', '#1F5420'],
+                    groundPattern: '#2E6A2F',
+                    clouds: ['#D6F3D1', '#E8F8E5', '#F0FFF0'],
+                    player: '#E8DCC8',
+                    obstacle: ['#2E8B57', '#3CB371', '#228B22'],
+                    powerup: '#FFD700',
+                    accent: '#FF7F50'
+                },
+                desert: {
+                    sky: ['#FFD89B', '#FFE4B5', '#FFF0D0'],
+                    ground: ['#E8A34C', '#D1863A', '#C27C2C'],
+                    groundPattern: '#D1863A',
+                    clouds: ['#FFF1D6', '#FFF8E7', '#FFFAF0'],
+                    player: '#E8DCC8',
+                    obstacle: ['#C27C2C', '#B8732A', '#A66A28'],
+                    powerup: '#FFDD57',
+                    accent: '#FF8C42'
+                },
+                space: {
+                    sky: ['#0b1220', '#1a2332', '#2a3444'],
+                    ground: ['#1f2937', '#374151', '#4b5563'],
+                    groundPattern: '#111827',
+                    clouds: ['#2d3748', '#4a5568', '#718096'],
+                    player: '#9AE6FF',
+                    obstacle: ['#8A93A6', '#9CA3AF', '#6B7280'],
+                    powerup: '#FFD166',
+                    accent: '#FF6B9D'
+                },
+                candy: {
+                    sky: ['#FFB3E6', '#FFC8F0', '#FFD9F7'],
+                    ground: ['#FF69B4', '#FF85C1', '#FFA0D0'],
+                    groundPattern: '#FF1493',
+                    clouds: ['#FFE6F5', '#FFF0FA', '#FFFAFD'],
+                    player: '#FFE4E1',
+                    obstacle: ['#FF69B4', '#FF85C1', '#DA70D6'],
+                    powerup: '#FFD700',
+                    accent: '#00CED1'
+                }
+            },
+            backgroundObjects: [],
+            bgParticles: [],
+            stars: [],
+            transition: {
+                isActive: false,
+                timer: 0,
+                duration: 40,
+                nextTheme: null
+            }
+        };
+
+        // Initialize player position
+        game.player.y = lanes[1].ground - game.player.height;
+
+        let isDucking = false;
+
+        // Input handling
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'Space') {
+                e.preventDefault();
+                if (gameState === 'menu' || gameState === 'gameover') {
+                    startGame();
+                } else if (gameState === 'playing') {
+                    jump();
+                }
+            }
+            
+            if (e.code === 'ArrowDown' && gameState === 'playing' && !game.player.isJumping) {
+                isDucking = true;
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            if (e.code === 'ArrowDown') {
+                isDucking = false;
+            }
+        });
+
+        canvas.addEventListener('click', () => {
+            if (gameState === 'menu' || gameState === 'gameover') {
+                startGame();
+            } else if (gameState === 'playing') {
+                jump();
+            }
+        });
+
+        function startGame() {
+            game.player.currentLane = 1;
+            game.player.targetLane = 1;
+            game.player.laneTransition = 0;
+            game.player.y = lanes[1].ground - game.player.height;
+            game.player.velocityY = 0;
+            game.player.isJumping = false;
+            game.obstacles = [];
+            game.powerups = [];
+            game.portals = [];
+            game.coins = [];
+            game.backgroundObjects = [];
+            game.bgParticles = [];
+            particles.length = 0;
+            populateBackground(game.theme);
+            game.speed = 6;
+            game.frameCount = 0;
+            game.invincible = false;
+            game.invincibleTimer = 0;
+            game.portalImmunity = false;
+            game.portalImmunityTimer = 0;
+            game.speedBoost = false;
+            game.speedBoostTimer = 0;
+            game.slowdown = false;
+            game.slowdownTimer = 0;
+            game.scoreMultiplier = 1;
+            game.scoreMultiplierTimer = 0;
+            game.coinCount = 0;
+            score = 0;
+            distance = 0;
+            isDucking = false;
+            gameState = 'playing';
+        }
+
+        function jump() {
+            if (!game.player.isJumping && game.player.currentLane === game.player.targetLane) {
+                game.player.velocityY = game.jumpForce;
+                game.player.isJumping = true;
+                createParticles(game.player.x + game.player.width/2, game.player.y + game.player.height, '#D4C4A8', 5);
+            }
+        }
+
+        // Particle system
+        function createParticles(x, y, color, count) {
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 4,
+                    vy: (Math.random() - 0.5) * 4 - 2,
+                    life: 30,
+                    maxLife: 30,
+                    color: color,
+                    size: 3 + Math.random() * 3
+                });
+            }
+        }
+
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.vy += 0.3; // gravity
+                p.life--;
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+
+        function drawParticles() {
+            for (const p of particles) {
+                const alpha = p.life / p.maxLife;
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = p.color;
+                ctx.fillRect(Math.floor(p.x), Math.floor(p.y), p.size, p.size);
+            }
+            ctx.globalAlpha = 1;
+        }
+
+        // Drawing functions with more detail
+        function drawPixelRect(x, y, w, h, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(Math.floor(x), Math.floor(y), w, h);
+        }
+
+        function drawGradientRect(x, y, w, h, colors) {
+            const gradient = ctx.createLinearGradient(x, y, x + w, y + h);
+            colors.forEach((color, i) => {
+                gradient.addColorStop(i / (colors.length - 1), color);
+            });
+            ctx.fillStyle = gradient;
+            ctx.fillRect(Math.floor(x), Math.floor(y), w, h);
+        }
+
+        function drawMummy() {
+            const px = game.player.x;
+            const currentHeight = isDucking && !game.player.isJumping ? game.player.duckHeight : game.player.height;
+            const py = game.player.y;
+            const p = 6;
+            game.player.frame++;
+
+            let legStride = 0;
+            let armSwing = 0;
+            let bodyBob = 0;
+            
+            if (!game.player.isJumping && !isDucking) {
+                game.player.walkCycle += 0.15;
+                legStride = Math.sin(game.player.walkCycle) * 3;
+                armSwing = Math.sin(game.player.walkCycle) * 2;
+                bodyBob = Math.abs(Math.sin(game.player.walkCycle * 2)) * 1.5;
+            }
+
+            // Color based on powerups with glow
+            let bodyColor = game.themeColors[game.theme].player;
+            let glowColor = null;
+            
+            if (game.invincible) {
+                const colors = ['#FFD700', '#FFA500', '#FF6347'];
+                bodyColor = colors[Math.floor(game.frameCount / 4) % colors.length];
+                glowColor = 'rgba(255, 215, 0, 0.4)';
+            } else if (game.portalImmunity) {
+                const colors = ['#FF00FF', '#FF69B4', '#DA70D6'];
+                bodyColor = colors[Math.floor(game.frameCount / 4) % colors.length];
+                glowColor = 'rgba(255, 0, 255, 0.4)';
+            }
+
+            // Draw glow effect
+            if (glowColor) {
+                ctx.fillStyle = glowColor;
+                ctx.fillRect(px - 4, py - 4, game.player.width + 8, currentHeight + 8);
+            }
+
+            if (isDucking && !game.player.isJumping) {
+                const duckOffset = 22;
+                
+                // Shadow
+                ctx.fillStyle = "rgba(0,0,0,0.3)";
+                ctx.fillRect(px, py + duckOffset + currentHeight, game.player.width, 4);
+                
+                // Outline
+                ctx.fillStyle = "#000";
+                ctx.fillRect(px + p*0.5 - 1, py + duckOffset - 1, p*5 + 2, p*4 + 2);
+                
+                // Body
+                drawGradientRect(px + p*0.5, py + duckOffset, p*5, p*4, [bodyColor, shadeColor(bodyColor, -15)]);
+                
+                // Bandages with texture
+                ctx.fillStyle = "#D4C4A8";
+                ctx.fillRect(px + p*0.5, py + duckOffset + p*0.8, p*5, p*0.8);
+                ctx.fillRect(px + p*0.5, py + duckOffset + p*2.5, p*5, p*0.8);
+                ctx.fillStyle = "#C4B498";
+                ctx.fillRect(px + p*0.5, py + duckOffset + p*1.5, p*5, p*0.3);
+                
+                // Head
+                drawGradientRect(px + p*1, py + duckOffset, p*4, p*2.5, [bodyColor, shadeColor(bodyColor, -10)]);
+                
+                // Eyes with glow
+                ctx.fillStyle = "#FF6B35";
+                ctx.fillRect(px + p*2, py + duckOffset + p*0.8, p*0.8, p*0.6);
+                ctx.fillRect(px + p*4, py + duckOffset + p*0.8, p*0.8, p*0.6);
+                ctx.fillStyle = "rgba(255, 107, 53, 0.4)";
+                ctx.fillRect(px + p*1.7, py + duckOffset + p*0.5, p*1.4, p*1);
+                ctx.fillRect(px + p*3.7, py + duckOffset + p*0.5, p*1.4, p*1);
+                
+                return;
+            }
+
+            // Standing pose with more detail
+            // Shadow
+            ctx.fillStyle = "rgba(0,0,0,0.3)";
+            ctx.fillRect(px, py + game.player.height, game.player.width, 4);
+            
+            // Outlines
+            ctx.fillStyle = "#000";
+            ctx.fillRect(px + p*1 - 1, py + p*6 - bodyBob + legStride - 1, p*1.5 + 2, p*2.5 + 2);
+            ctx.fillRect(px + p*3.5 - 1, py + p*6 - bodyBob - legStride - 1, p*1.5 + 2, p*2.5 + 2);
+            ctx.fillRect(px + p*0.5 - 1, py + p*1.5 - bodyBob - 1, p*5 + 2, p*4.5 + 2);
+            ctx.fillRect(px + p*1 - 1, py - bodyBob - 1, p*4 + 2, p*3 + 2);
+
+            // Legs with gradient
+            drawGradientRect(px + p*1, py + p*6 - bodyBob + legStride, p*1.5, p*2.5, [bodyColor, shadeColor(bodyColor, -20)]);
+            drawGradientRect(px + p*3.5, py + p*6 - bodyBob - legStride, p*1.5, p*2.5, [bodyColor, shadeColor(bodyColor, -20)]);
+            
+            // Leg bandages
+            ctx.fillStyle = "#D4C4A8";
+            ctx.fillRect(px + p*1, py + p*6.5 - bodyBob + legStride, p*1.5, p*0.5);
+            ctx.fillRect(px + p*3.5, py + p*6.5 - bodyBob - legStride, p*1.5, p*0.5);
+
+            // Body with gradient and detail
+            drawGradientRect(px + p*0.5, py + p*1.5 - bodyBob, p*5, p*4.5, [bodyColor, shadeColor(bodyColor, -15), shadeColor(bodyColor, -5)]);
+
+            // Detailed bandage wraps
+            ctx.fillStyle = "#D4C4A8";
+            ctx.fillRect(px + p*0.5, py + p*2 - bodyBob, p*5, p*0.7);
+            ctx.fillRect(px + p*0.5, py + p*3.5 - bodyBob, p*5, p*0.7);
+            ctx.fillRect(px + p*0.5, py + p*5 - bodyBob, p*5, p*0.7);
+            ctx.fillStyle = "#C4B498";
+            ctx.fillRect(px + p*0.5, py + p*2.6 - bodyBob, p*5, p*0.3);
+            ctx.fillRect(px + p*0.5, py + p*4.1 - bodyBob, p*5, p*0.3);
+            
+            // Highlight
+            ctx.fillStyle = shadeColor(bodyColor, 20);
+            ctx.fillRect(px + p*1, py + p*2.5 - bodyBob, p*2, p*2);
+
+            // Head with gradient
+            drawGradientRect(px + p*1, py - bodyBob, p*4, p*3, [bodyColor, shadeColor(bodyColor, -10)]);
+
+            // Head bandages
+            ctx.fillStyle = "#D4C4A8";
+            ctx.fillRect(px + p*1, py + p*0.5 - bodyBob, p*4, p*0.7);
+            ctx.fillRect(px + p*1, py + p*1.5 - bodyBob, p*4, p*0.7);
+            ctx.fillRect(px + p*1, py + p*2.3 - bodyBob, p*4, p*0.7);
+
+            // Eyes with enhanced glow
+            ctx.fillStyle = "#FF6B35";
+            ctx.fillRect(px + p*1.8, py + p*1 - bodyBob, p*0.8, p*0.7);
+            ctx.fillRect(px + p*3.4, py + p*1 - bodyBob, p*0.8, p*0.7);
+            
+            // Eye glow
+            ctx.fillStyle = "rgba(255, 107, 53, 0.5)";
+            ctx.fillRect(px + p*1.5, py + p*0.7 - bodyBob, p*1.4, p*1.1);
+            ctx.fillRect(px + p*3.1, py + p*0.7 - bodyBob, p*1.4, p*1.1);
+            
+            // Bright eye center
+            ctx.fillStyle = "#FFB380";
+            ctx.fillRect(px + p*2, py + p*1.1 - bodyBob, p*0.4, p*0.4);
+            ctx.fillRect(px + p*3.6, py + p*1.1 - bodyBob, p*0.4, p*0.4);
+
+            // Arms with detail
+            ctx.fillStyle = "#000";
+            ctx.fillRect(px - 1, py + p*2 - bodyBob + armSwing - 1, p*1.2 + 2, p*3 + 2);
+            ctx.fillRect(px + p*4.8 - 1, py + p*2 - bodyBob - armSwing - 1, p*1.2 + 2, p*3 + 2);
+            
+            drawGradientRect(px, py + p*2 - bodyBob + armSwing, p*1.2, p*3, [bodyColor, shadeColor(bodyColor, -20)]);
+            drawGradientRect(px + p*4.8, py + p*2 - bodyBob - armSwing, p*1.2, p*3, [bodyColor, shadeColor(bodyColor, -20)]);
+            
+            ctx.fillStyle = "#D4C4A8";
+            ctx.fillRect(px, py + p*3 - bodyBob + armSwing, p*1.2, p*0.5);
+            ctx.fillRect(px + p*4.8, py + p*3 - bodyBob - armSwing, p*1.2, p*0.5);
+        }
+
+        function drawDetailedObstacle(obs) {
+            if (obs.type === 'ground') {
+                const colors = game.themeColors[game.theme].obstacle;
+                
+                // Shadow
+                ctx.fillStyle = "rgba(0,0,0,0.3)";
+                ctx.fillRect(obs.x, obs.y + obs.height, obs.width, 4);
+                
+                // Main body with gradient
+                drawGradientRect(obs.x + 8, obs.y, 24, obs.height, colors);
+                
+                // Arms with detail
+                drawGradientRect(obs.x, obs.y + 16, 12, 20, [colors[1], colors[2]]);
+                drawGradientRect(obs.x + 32, obs.y + 20, 12, 20, [colors[1], colors[2]]);
+                
+                // Texture details
+                ctx.fillStyle = colors[2];
+                for (let i = 0; i < 4; i++) {
+                    ctx.fillRect(obs.x + 12, obs.y + 8 + i*8, 2, 4);
+                    ctx.fillRect(obs.x + 26, obs.y + 8 + i*8, 2, 4);
+                }
+                
+                // Highlights
+                ctx.fillStyle = shadeColor(colors[0], 20);
+                ctx.fillRect(obs.x + 14, obs.y + 4, 8, obs.height - 8);
+                
+            } else {
+                // Flying obstacle with more detail
+                const wobble = Math.sin(game.frameCount * 0.2) * 2;
+                
+                // Shadow on ground
+                const shadowY = lanes[obs.lane].ground;
+                ctx.fillStyle = "rgba(0,0,0,0.2)";
+                ctx.fillRect(obs.x + 8, shadowY, 16, 3);
+                
+                // Body with gradient
+                drawGradientRect(obs.x, obs.y + wobble, 32, 18, ['#E74C3C', '#C0392B', '#A93226']);
+                drawGradientRect(obs.x + 6, obs.y + 4 + wobble, 20, 10, ['#C0392B', '#922B21']);
+                
+                // Wings with animation
+                const wingFlap = Math.sin(game.frameCount * 0.3) * 4;
+                drawGradientRect(obs.x - 6, obs.y + 6 + wobble + wingFlap, 12, 8, ['#E74C3C', '#C0392B']);
+                drawGradientRect(obs.x + 26, obs.y + 6 + wobble - wingFlap, 12, 8, ['#E74C3C', '#C0392B']);
+                
+                // Eye detail
+                ctx.fillStyle = "#FFF";
+                ctx.fillRect(obs.x + 22, obs.y + 6 + wobble, 4, 4);
+                ctx.fillStyle = "#000";
+                ctx.fillRect(obs.x + 23, obs.y + 7 + wobble, 2, 2);
+                
+                // Highlight
+                ctx.fillStyle = "#EC7063";
+                ctx.fillRect(obs.x + 8, obs.y + 2 + wobble, 12, 6);
+            }
+        }
+
+        function drawEnhancedPowerup(pu) {
+            const pulse = Math.sin(game.frameCount * 0.15) * 3;
+            const rotate = game.frameCount * 0.05;
+            
+            ctx.save();
+            ctx.translate(pu.x + 15, pu.y + 15 + pulse);
+            ctx.rotate(rotate);
+            
+            if (pu.type === 'shield') {
+                // Outer glow
+                ctx.fillStyle = "rgba(255, 215, 0, 0.3)";
+                ctx.fillRect(-18, -18, 36, 36);
+                
+                // Shield with gradient
+                drawGradientRect(-15, -15, 30, 30, ['#FFD700', '#FFA500', '#FF8C00']);
+                drawGradientRect(-12, -12, 24, 24, ['#FFA500', '#FF8C00']);
+                ctx.fillStyle = "#FF6347";
+                ctx.fillRect(-8, -8, 16, 16);
+                
+                // Shine
+                ctx.fillStyle = "#FFF";
+                ctx.fillRect(-10, -10, 8, 8);
+                
+            } else if (pu.type === 'speedBoost') {
+                ctx.fillStyle = "rgba(0, 255, 0, 0.3)";
+                ctx.fillRect(-18, -18, 36, 36);
+                drawGradientRect(-15, -15, 30, 30, ['#00FF00', '#00DD00', '#00BB00']);
+                ctx.fillStyle = "#FFF";
+                ctx.fillRect(-12, -8, 20, 4);
+                ctx.fillRect(-8, -12, 12, 4);
+                ctx.fillRect(-4, -16, 8, 4);
+                
+            } else if (pu.type === 'scoreMultiplier') {
+                ctx.fillStyle = "rgba(0, 255, 255, 0.3)";
+                ctx.fillRect(-18, -18, 36, 36);
+                drawGradientRect(-15, -15, 30, 30, ['#00FFFF', '#0099FF', '#0066FF']);
+                ctx.fillStyle = "#FFF";
+                ctx.font = "bold 20px monospace";
+                ctx.textAlign = "center";
+                ctx.fillText("x2", 0, 6);
+                
+            } else if (pu.type === 'slowdown') {
+                ctx.fillStyle = "rgba(255, 0, 255, 0.3)";
+                ctx.fillRect(-18, -18, 36, 36);
+                drawGradientRect(-15, -15, 30, 30, ['#FF00FF', '#DD00DD', '#BB00BB']);
+                ctx.fillStyle = "#FFF";
+                ctx.fillRect(-10, -2, 6, 4);
+                ctx.fillRect(4, -2, 6, 4);
+            }
+            
+            ctx.restore();
+        }
+
+        function drawCoin(coin) {
+            const wobble = Math.sin(game.frameCount * 0.1 + coin.x * 0.01) * 2;
+            const cy = coin.y + wobble;
+            const rotate = (game.frameCount * 0.05 + coin.x * 0.01) % (Math.PI * 2);
+            
+            // Shadow
+            ctx.fillStyle = "rgba(0,0,0,0.2)";
+            ctx.beginPath();
+            ctx.ellipse(coin.x + 12, lanes[coin.lane].ground, 8, 3, 0, 0, Math.PI*2);
+            ctx.fill();
+            
+            ctx.save();
+            ctx.translate(coin.x + 12, cy);
+            ctx.rotate(rotate);
+            
+            // Glow
+            ctx.fillStyle = "rgba(255, 215, 0, 0.4)";
+            ctx.fillRect(-14, -14, 28, 28);
+            
+            // Outer ring
+            ctx.fillStyle = "#D4AF37";
+            ctx.beginPath();
+            ctx.arc(0, 0, 12, 0, Math.PI*2);
+            ctx.fill();
+            
+            // Inner circle
+            ctx.fillStyle = "#FFD700";
+            ctx.beginPath();
+            ctx.arc(0, 0, 9, 0, Math.PI*2);
+            ctx.fill();
+            
+            // Highlight
+            ctx.fillStyle = "#FFF4A3";
+            ctx.beginPath();
+            ctx.arc(-3, -3, 4, 0, Math.PI*2);
+            ctx.fill();
+            
+            // Symbol
+            ctx.fillStyle = "#D4AF37";
+            ctx.fillRect(-2, -2, 4, 4);
+            
+            ctx.restore();
+        }
+
+        function drawEnhancedPortal(portal) {
+            const w = portal.width;
+            const h = portal.height;
+            const cx = portal.x + w/2;
+            const cy = portal.y + h/2;
+
+            // Outer glow
+            ctx.fillStyle = "rgba(75, 0, 130, 0.4)";
+            ctx.fillRect(portal.x - 8, portal.y - 8, w + 16, h + 16);
+            
+            // Outer ring with gradient
+            drawGradientRect(portal.x, portal.y, w, h, ['#4B0082', '#8B008B', '#9400D3']);
+            
+            // Inner void with layers
+            drawGradientRect(portal.x + 8, portal.y + 8, w - 16, h - 16, ['#000', '#1a0033', '#000']);
+
+            // Swirl particles with trails
+            for (let i = 0; i < 12; i++) {
+                const angle = (game.frameCount * 0.08 + i * (Math.PI / 6)) % (Math.PI * 2);
+                const radius = (w/4) + Math.sin(game.frameCount * 0.05 + i) * 5;
+                const px = Math.floor(cx + Math.cos(angle) * radius);
+                const py = Math.floor(cy + Math.sin(angle) * radius);
+                
+                ctx.fillStyle = portal.color;
+                ctx.fillRect(px, py, 6, 6);
+                
+                // Trail effect
+                const trailAngle = angle - 0.3;
+                const tpx = Math.floor(cx + Math.cos(trailAngle) * (radius - 5));
+                const tpy = Math.floor(cy + Math.sin(trailAngle) * (radius - 5));
+                ctx.globalAlpha = 0.5;
+                ctx.fillRect(tpx, tpy, 4, 4);
+                ctx.globalAlpha = 1;
+            }
+            
+            // Center sparkle
+            const sparkle = Math.sin(game.frameCount * 0.2) * 0.5 + 0.5;
+            ctx.fillStyle = `rgba(255, 255, 255, ${sparkle})`;
+            ctx.fillRect(cx - 4, cy - 4, 8, 8);
+        }
+
+        function drawLanes() {
+            for (let i = 0; i < lanes.length; i++) {
+                const lane = lanes[i];
+                const colors = game.themeColors[game.theme].ground;
+                
+                // Ground with gradient
+                drawGradientRect(0, lane.ground, canvas.width, 60, colors);
+                
+                // Ground pattern with parallax
+                for (let j = 0; j < canvas.width; j += 20) {
+                    const offset = (game.frameCount * game.speed * (1 + i * 0.1)) % 20;
+                    ctx.fillStyle = game.themeColors[game.theme].groundPattern;
+                    ctx.globalAlpha = 0.6;
+                    ctx.fillRect(j - offset, lane.ground + 5, 12, 8);
+                    ctx.fillRect(j - offset + 5, lane.ground + 18, 10, 6);
+                    ctx.globalAlpha = 1;
+                }
+                
+                // Lane divider with animated dash
+                if (i < lanes.length - 1) {
+                    const dividerY = lane.ground + 60;
+                    for (let j = 0; j < canvas.width; j += 40) {
+                        const offset = (game.frameCount * game.speed * 1.5) % 40;
+                        drawGradientRect(j - offset, dividerY - 2, 20, 4, ['#FFD700', '#FFA500', '#FFD700']);
+                    }
+                }
+            }
+        }
+
+        function drawEnhancedClouds() {
+            const clouds = game.themeColors[game.theme].clouds;
+            for (let i = 0; i < 8; i++) {
+                const layer = i % 3;
+                const speed = 1 + layer * 0.5;
+                const x = ((game.frameCount * speed + i * 180) % (canvas.width + 150)) - 75;
+                const y = 20 + layer * 30 + Math.sin(game.frameCount * 0.02 + i) * 5;
+                const size = 50 + layer * 15;
+                
+                ctx.globalAlpha = 0.7 - layer * 0.2;
+                
+                // Cloud with multiple puffs
+                drawGradientRect(x, y, size, 20, [clouds[0], clouds[1]]);
+                drawGradientRect(x + 10, y - 10, size - 20, 20, [clouds[1], clouds[2]]);
+                drawGradientRect(x + 20, y - 5, size - 40, 18, clouds);
+                
+                ctx.globalAlpha = 1;
+            }
+        }
+
+        function populateBackground(theme) {
+            game.backgroundObjects = [];
+            const w = canvas.width;
+
+            if (theme === 'jungle') {
+                // Large trees with multiple layers
+                for (let i = 0; i < 12; i++) {
+                    const x = i * (w / 8) + Math.random() * 100;
+                    const height = 100 + Math.random() * 60;
+                    game.backgroundObjects.push({ 
+                        type: 'tree', 
+                        x, 
+                        y: 60, 
+                        w: 70, 
+                        h: height, 
+                        layer: 0.2 + Math.random() * 0.3, 
+                        color: '#2E6A2F',
+                        swayOffset: Math.random() * Math.PI * 2
+                    });
+                }
+                
+                // Vines and foliage
+                for (let i = 0; i < 20; i++) {
+                    game.backgroundObjects.push({
+                        type: 'vine',
+                        x: Math.random() * w,
+                        y: 40 + Math.random() * 80,
+                        w: 8,
+                        h: 40 + Math.random() * 40,
+                        layer: 0.5,
+                        color: '#3CB371'
+                    });
+                }
+                
+                // Flying parrots
+                for (let i = 0; i < 4; i++) {
+                    game.backgroundObjects.push({
+                        type: 'bird',
+                        x: Math.random() * w,
+                        y: 80 + Math.random() * 100,
+                        w: 18,
+                        h: 12,
+                        layer: 0.4,
+                        color: ['#FF6347', '#FFD700', '#00CED1'][i % 3],
+                        vx: 1 + Math.random() * 0.8,
+                        flapPhase: Math.random() * Math.PI * 2
+                    });
+                }
+                
+            } else if (theme === 'desert') {
+                // Layered dunes
+                for (let i = 0; i < 10; i++) {
+                    const x = i * (w / 6) + Math.random() * 120;
+                    game.backgroundObjects.push({ 
+                        type: 'dune', 
+                        x, 
+                        y: 100 + Math.random() * 40, 
+                        w: 250, 
+                        h: 70, 
+                        layer: 0.25 + Math.random() * 0.2, 
+                        color: '#D1863A' 
+                    });
+                }
+                
+                // Cacti of various sizes
+                for (let i = 0; i < 15; i++) {
+                    game.backgroundObjects.push({
+                        type: 'cactus',
+                        x: Math.random() * w,
+                        y: 120 + Math.random() * 60,
+                        w: 20 + Math.random() * 15,
+                        h: 50 + Math.random() * 70,
+                        layer: 0.5 + Math.random() * 0.3,
+                        color: '#8B7355'
+                    });
+                }
+                
+                // Sun with rays
+                game.backgroundObjects.push({
+                    type: 'sun',
+                    x: w - 150,
+                    y: 80,
+                    w: 80,
+                    h: 80,
+                    layer: 0.1,
+                    color: '#FFD700'
+                });
+                
+            } else if (theme === 'space') {
+                // Stars
+                for (let i = 0; i < 100; i++) {
+                    game.stars.push({
+                        x: Math.random() * w,
+                        y: Math.random() * 400,
+                        size: 1 + Math.random() * 2,
+                        speed: 0.1 + Math.random() * 0.3,
+                        twinkle: Math.random() * Math.PI * 2
+                    });
+                }
+                
+                // Planets with rings
+                for (let i = 0; i < 5; i++) {
+                    const x = Math.random() * w;
+                    const y = 60 + Math.random() * 120;
+                    const size = 40 + Math.random() * 60;
+                    game.backgroundObjects.push({ 
+                        type: 'planet', 
+                        x, 
+                        y, 
+                        w: size, 
+                        h: size, 
+                        layer: 0.15, 
+                        color: ['#8A63FF', '#FF6B9D', '#4ECDC4', '#FFD166'][i % 4],
+                        hasRing: Math.random() > 0.5
+                    });
+                }
+                
+                // Asteroids
+                for (let i = 0; i < 20; i++) {
+                    game.backgroundObjects.push({
+                        type: 'asteroid',
+                        x: Math.random() * w,
+                        y: 80 + Math.random() * 300,
+                        w: 8 + Math.random() * 16,
+                        h: 8 + Math.random() * 16,
+                        layer: 0.4 + Math.random() * 0.3,
+                        color: '#9AA4B2',
+                        rotation: Math.random() * Math.PI * 2,
+                        rotSpeed: (Math.random() - 0.5) * 0.05
+                    });
+                }
+                
+            } else if (theme === 'candy') {
+                // Candy mountains
+                for (let i = 0; i < 8; i++) {
+                    game.backgroundObjects.push({
+                        type: 'candy-mountain',
+                        x: i * (w / 5) + Math.random() * 100,
+                        y: 100,
+                        w: 180,
+                        h: 120,
+                        layer: 0.3,
+                        color: ['#FF69B4', '#FFB6C1', '#DDA0DD'][i % 3]
+                    });
+                }
+                
+                // Lollipops
+                for (let i = 0; i < 12; i++) {
+                    game.backgroundObjects.push({
+                        type: 'lollipop',
+                        x: Math.random() * w,
+                        y: 80 + Math.random() * 80,
+                        w: 35,
+                        h: 80,
+                        layer: 0.5,
+                        color: ['#FF1493', '#00CED1', '#FFD700'][i % 3]
+                    });
+                }
+                
+            } else {
+                // Default theme - hills and buildings
+                for (let i = 0; i < 8; i++) {
+                    const x = i * (w / 5) + Math.random() * 80;
+                    game.backgroundObjects.push({ 
+                        type: 'hill', 
+                        x, 
+                        y: 140, 
+                        w: 240, 
+                        h: 80, 
+                        layer: 0.25, 
+                        color: '#8B6F47' 
+                    });
+                }
+                
+                for (let i = 0; i < 10; i++) {
+                    const x = Math.random() * w;
+                    const height = 100 + Math.random() * 100;
+                    game.backgroundObjects.push({ 
+                        type: 'building', 
+                        x, 
+                        y: 220 - height, 
+                        w: 60, 
+                        h: height, 
+                        layer: 0.2, 
+                        color: '#3B4B5B' 
+                    });
+                }
+            }
+        }
+
+        function updateBackgroundObjects() {
+            for (let obj of game.backgroundObjects) {
+                obj.x -= game.speed * obj.layer;
+                
+                if (obj.type === 'bird') {
+                    obj.x += obj.vx;
+                    obj.flapPhase += 0.15;
+                }
+                
+                if (obj.type === 'asteroid' && obj.rotation !== undefined) {
+                    obj.rotation += obj.rotSpeed;
+                }
+                
+                if (obj.x + (obj.w || 40) < -100) {
+                    obj.x = canvas.width + Math.random() * 300;
+                }
+            }
+            
+            // Update stars
+            for (let star of game.stars) {
+                star.x -= star.speed;
+                if (star.x < 0) star.x = canvas.width;
+                star.twinkle += 0.05;
+            }
+        }
+
+        function drawBackgroundObjects() {
+            // Draw stars first if space theme
+            if (game.theme === 'space') {
+                for (let star of game.stars) {
+                    const alpha = 0.5 + Math.sin(star.twinkle) * 0.5;
+                    ctx.globalAlpha = alpha;
+                    ctx.fillStyle = '#FFF';
+                    ctx.fillRect(star.x, star.y, star.size, star.size);
+                }
+                ctx.globalAlpha = 1;
+            }
+            
+            for (let obj of game.backgroundObjects) {
+                ctx.save();
+                
+                if (obj.type === 'tree') {
+                    const sway = Math.sin(game.frameCount * 0.03 + obj.swayOffset) * 3;
+                    
+                    // Trunk
+                    drawGradientRect(obj.x + obj.w/2 - 12, obj.y + obj.h - 50, 24, 50, ['#654321', '#4a3621']);
+                    
+                    // Canopy layers
+                    for (let i = 0; i < 4; i++) {
+                        ctx.fillStyle = shadeColor(obj.color, -10 * i);
+                        ctx.fillRect(obj.x + 10 + sway * (i * 0.3), obj.y + i * 25, obj.w - 20, 30);
+                    }
+                    
+                } else if (obj.type === 'vine') {
+                    ctx.fillStyle = obj.color;
+                    const segments = 5;
+                    for (let i = 0; i < segments; i++) {
+                        const swing = Math.sin(game.frameCount * 0.05 + i) * 4;
+                        ctx.fillRect(obj.x + swing, obj.y + (obj.h / segments) * i, obj.w, obj.h / segments);
+                    }
+                    
+                } else if (obj.type === 'bird') {
+                    const wingFlap = Math.sin(obj.flapPhase) * 6;
+                    
+                    // Body
+                    drawGradientRect(obj.x + 4, obj.y, 10, 8, [obj.color, shadeColor(obj.color, -20)]);
+                    
+                    // Wings
+                    ctx.fillStyle = shadeColor(obj.color, -10);
+                    ctx.fillRect(obj.x, obj.y + 2 + wingFlap, 6, 4);
+                    ctx.fillRect(obj.x + 12, obj.y + 2 - wingFlap, 6, 4);
+                    
+                } else if (obj.type === 'dune') {
+                    // Layered dune effect
+                    for (let i = 0; i < 4; i++) {
+                        const color = shadeColor(obj.color, i * 5);
+                        ctx.fillStyle = color;
+                        ctx.fillRect(obj.x + i * 30, obj.y + i * 12, obj.w - i * 60, obj.h - i * 12);
+                    }
+                    
+                } else if (obj.type === 'cactus') {
+                    // Detailed cactus
+                    drawGradientRect(obj.x, obj.y, obj.w, obj.h, [obj.color, shadeColor(obj.color, -15)]);
+                    
+                    // Arms
+                    if (obj.h > 60) {
+                        drawGradientRect(obj.x - 8, obj.y + 20, 10, 25, [obj.color, shadeColor(obj.color, -15)]);
+                        drawGradientRect(obj.x + obj.w - 2, obj.y + 30, 10, 25, [obj.color, shadeColor(obj.color, -15)]);
+                    }
+                    
+                } else if (obj.type === 'sun') {
+                    // Sun with animated rays
+                    const rayRotation = game.frameCount * 0.02;
+                    
+                    ctx.translate(obj.x, obj.y);
+                    ctx.rotate(rayRotation);
+                    
+                    // Rays
+                    ctx.fillStyle = 'rgba(255, 215, 0, 0.6)';
+                    for (let i = 0; i < 12; i++) {
+                        ctx.save();
+                        ctx.rotate((Math.PI * 2 / 12) * i);
+                        ctx.fillRect(-6, -60, 12, 30);
+                        ctx.restore();
+                    }
+                    
+                    ctx.rotate(-rayRotation);
+                    
+                    // Sun body
+                    drawGradientRect(-obj.w/2, -obj.h/2, obj.w, obj.h, ['#FFD700', '#FFA500', '#FF8C00']);
+                    ctx.fillStyle = '#FFF';
+                    ctx.fillRect(-20, -20, 25, 25);
+                    
+                } else if (obj.type === 'planet') {
+                    // Planet with detail
+                    drawGradientRect(obj.x, obj.y, obj.w, obj.h, [obj.color, shadeColor(obj.color, -30)]);
+                    
+                    // Craters/features
+                    ctx.fillStyle = shadeColor(obj.color, -40);
+                    ctx.fillRect(obj.x + obj.w * 0.2, obj.y + obj.h * 0.3, obj.w * 0.2, obj.h * 0.2);
+                    ctx.fillRect(obj.x + obj.w * 0.6, obj.y + obj.h * 0.5, obj.w * 0.15, obj.h * 0.15);
+                    
+                    // Ring
+                    if (obj.hasRing) {
+                        ctx.globalAlpha = 0.7;
+                        ctx.fillStyle = shadeColor(obj.color, 40);
+                        ctx.fillRect(obj.x - 10, obj.y + obj.h * 0.5, obj.w + 20, 6);
+                        ctx.globalAlpha = 1;
+                    }
+                    
+                } else if (obj.type === 'asteroid') {
+                    ctx.translate(obj.x + obj.w/2, obj.y + obj.h/2);
+                    ctx.rotate(obj.rotation);
+                    drawGradientRect(-obj.w/2, -obj.h/2, obj.w, obj.h, [obj.color, shadeColor(obj.color, -20)]);
+                    
+                } else if (obj.type === 'candy-mountain') {
+                    // Colorful candy mountain
+                    for (let i = 0; i < 3; i++) {
+                        const color = shadeColor(obj.color, i * 10);
+                        ctx.fillStyle = color;
+                        ctx.fillRect(obj.x + i * 40, obj.y + i * 20, obj.w - i * 80, obj.h - i * 20);
+                    }
+                    
+                    // Icing drips
+                    ctx.fillStyle = '#FFF';
+                    for (let i = 0; i < 5; i++) {
+                        ctx.fillRect(obj.x + 30 + i * 30, obj.y + 10, 15, 20);
+                        ctx.fillRect(obj.x + 35 + i * 30, obj.y + 25, 10, 15);
+                    }
+                    
+                } else if (obj.type === 'lollipop') {
+                    // Lollipop candy
+                    const size = 30;
+                    const rotation = game.frameCount * 0.02;
+                    
+                    // Stick
+                    ctx.fillStyle = '#DDD';
+                    ctx.fillRect(obj.x + 15, obj.y + 30, 5, 50);
+                    
+                    // Candy spiral
+                    ctx.save();
+                    ctx.translate(obj.x + 17, obj.y + 15);
+                    ctx.rotate(rotation);
+                    
+                    drawGradientRect(-size/2, -size/2, size, size, [obj.color, shadeColor(obj.color, -20)]);
+                    
+                    // Spiral pattern
+                    ctx.fillStyle = '#FFF';
+                    for (let i = 0; i < 3; i++) {
+                        ctx.save();
+                        ctx.rotate((Math.PI * 2 / 3) * i);
+                        ctx.fillRect(-3, -size/2 + 5, 6, size - 10);
+                        ctx.restore();
+                    }
+                    
+                    ctx.restore();
+                    
+                } else if (obj.type === 'hill') {
+                    // Rounded hill
+                    for (let i = 0; i < 5; i++) {
+                        const color = shadeColor(obj.color, i * 4);
+                        ctx.fillStyle = color;
+                        ctx.fillRect(obj.x + i * 20, obj.y + i * 10, obj.w - i * 40, obj.h - i * 10);
+                    }
+                    
+                } else if (obj.type === 'building') {
+                    // Building with windows
+                    drawGradientRect(obj.x, obj.y, obj.w, obj.h, [obj.color, shadeColor(obj.color, -20)]);
+                    
+                    // Windows
+                    const windowsX = 3;
+                    const windowsY = Math.floor(obj.h / 25);
+                    for (let wy = 0; wy < windowsY; wy++) {
+                        for (let wx = 0; wx < windowsX; wx++) {
+                            const lit = Math.random() > 0.3;
+                            ctx.fillStyle = lit ? '#FFE66D' : '#1a1a1a';
+                            ctx.fillRect(obj.x + 8 + wx * 18, obj.y + 15 + wy * 25, 12, 18);
+                        }
+                    }
+                }
+                
+                ctx.restore();
+            }
+        }
+
+        function drawUI() {
+            // Semi-transparent background for UI
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fillRect(10, 10, 300, 140);
+            
+            ctx.fillStyle = '#FFF';
+            ctx.font = 'bold 24px monospace';
+            ctx.fillText('Score: ' + Math.floor(score * game.scoreMultiplier), 25, 40);
+            
+            ctx.font = 'bold 18px monospace';
+            ctx.fillText('Coins: ' + game.coinCount, 25, 65);
+            ctx.fillText('Distance: ' + Math.floor(distance) + 'm', 25, 90);
+            
+            let statusY = 115;
+            ctx.font = 'bold 16px monospace';
+            
+            if (game.invincible) {
+                const timeLeft = Math.ceil(game.invincibleTimer / 60);
+                ctx.fillStyle = '#FFD700';
+                ctx.fillText('🛡️ Shield: ' + timeLeft + 's', 25, statusY);
+                statusY += 20;
+            }
+            
+            if (game.portalImmunity) {
+                const timeLeft = Math.ceil(game.portalImmunityTimer / 60);
+                ctx.fillStyle = '#FF00FF';
+                ctx.fillText('✨ Portal Shield: ' + timeLeft + 's', 25, statusY);
+                statusY += 20;
+            }
+            
+            if (game.speedBoost) {
+                const timeLeft = Math.ceil(game.speedBoostTimer / 60);
+                ctx.fillStyle = '#00FF00';
+                ctx.fillText('⚡ Speed: ' + timeLeft + 's', 25, statusY);
+                statusY += 20;
+            }
+            
+            if (game.slowdown) {
+                const timeLeft = Math.ceil(game.slowdownTimer / 60);
+                ctx.fillStyle = '#FF00FF';
+                ctx.fillText('⏱️ Slow: ' + timeLeft + 's', 25, statusY);
+                statusY += 20;
+            }
+            
+            if (game.scoreMultiplier > 1) {
+                const timeLeft = Math.ceil(game.scoreMultiplierTimer / 60);
+                ctx.fillStyle = '#00FFFF';
+                ctx.fillText('✖️ x' + game.scoreMultiplier + ': ' + timeLeft + 's', 25, statusY);
+            }
+
+            // Theme indicator
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fillRect(canvas.width - 210, 10, 200, 40);
+            ctx.fillStyle = game.themeColors[game.theme].accent;
+            ctx.font = 'bold 20px monospace';
+            ctx.fillText('Theme: ' + game.theme.toUpperCase(), canvas.width - 200, 38);
+        }
+
+        function shadeColor(hex, percent) {
+            const f = hex.slice(1);
+            const R = parseInt(f.substring(0,2),16);
+            const G = parseInt(f.substring(2,4),16);
+            const B = parseInt(f.substring(4,6),16);
+            const t = percent < 0 ? 0 : 255;
+            const p = Math.abs(percent)/100;
+            const newR = Math.round((t - R) * p) + R;
+            const newG = Math.round((t - G) * p) + G;
+            const newB = Math.round((t - B) * p) + B;
+            return `#${(newR.toString(16).padStart(2,'0'))}${(newG.toString(16).padStart(2,'0'))}${(newB.toString(16).padStart(2,'0'))}`;
+        }
+
+        // Game logic
+        function update() {
+            if (gameState !== 'playing') return;
+
+            game.frameCount++;
+            distance += game.speed * 0.1;
+            updateParticles();
+            updateBackgroundObjects();
+
+            if (game.player.currentLane !== game.player.targetLane) {
+                game.player.laneTransition += 0.15;
+                if (game.player.laneTransition >= 1) {
+                    game.player.currentLane = game.player.targetLane;
+                    game.player.laneTransition = 0;
+                }
+                
+                const currentLaneY = lanes[game.player.currentLane].ground - game.player.height;
+                const targetLaneY = lanes[game.player.targetLane].ground - game.player.height;
+                game.player.y = currentLaneY + (targetLaneY - currentLaneY) * game.player.laneTransition;
+            }
+
+            if (game.player.isJumping || game.player.velocityY !== 0) {
+                game.player.velocityY += game.gravity;
+                game.player.y += game.player.velocityY;
+
+                const currentGround = lanes[game.player.currentLane].ground - game.player.height;
+                if (game.player.y >= currentGround) {
+                    game.player.y = currentGround;
+                    game.player.velocityY = 0;
+                    game.player.isJumping = false;
+                    createParticles(game.player.x + game.player.width/2, game.player.y + game.player.height, game.themeColors[game.theme].groundPattern, 3);
+                }
+            }
+
+            // Spawn obstacles
+            if (game.frameCount % 55 === 0) {
+                const randomLane = Math.floor(Math.random() * 3);
+                const obstacleType = Math.random() > 0.5 ? 'ground' : 'air';
+                
+                if (obstacleType === 'ground') {
+                    game.obstacles.push({
+                        x: canvas.width,
+                        y: lanes[randomLane].ground - 40,
+                        width: 44,
+                        height: 40,
+                        lane: randomLane,
+                        type: 'ground'
+                    });
+                } else {
+                    game.obstacles.push({
+                        x: canvas.width,
+                        y: lanes[randomLane].ground - 30,
+                        width: 32,
+                        height: 18,
+                        lane: randomLane,
+                        type: 'air'
+                    });
+                }
+            }
+
+            // Spawn coins
+            if (game.frameCount % 80 === 0 && Math.random() > 0.4) {
+                const randomLane = Math.floor(Math.random() * 3);
+                const pattern = Math.random();
+                
+                if (pattern < 0.6) {
+                    // Single coin
+                    game.coins.push({
+                        x: canvas.width,
+                        y: lanes[randomLane].ground - 80 - Math.random() * 40,
+                        width: 24,
+                        height: 24,
+                        lane: randomLane
+                    });
+                } else {
+                    // Line of coins
+                    const count = 3 + Math.floor(Math.random() * 3);
+                    const yPos = lanes[randomLane].ground - 80 - Math.random() * 40;
+                    for (let i = 0; i < count; i++) {
+                        game.coins.push({
+                            x: canvas.width + (i * 40),
+                            y: yPos,
+                            width: 24,
+                            height: 24,
+                            lane: randomLane
+                        });
+                    }
+                }
+            }
+
+            // Spawn powerups
+            if (game.frameCount % 280 === 0 && Math.random() > 0.3) {
+                const randomLane = Math.floor(Math.random() * 3);
+                const powerupTypes = ['shield', 'speedBoost', 'scoreMultiplier', 'slowdown'];
+                const randomType = powerupTypes[Math.floor(Math.random() * powerupTypes.length)];
+                
+                game.powerups.push({
+                    x: canvas.width,
+                    y: lanes[randomLane].ground - 90,
+                    width: 30,
+                    height: 30,
+                    lane: randomLane,
+                    type: randomType
+                });
+            }
+
+            // Spawn portals
+            if (game.frameCount % 500 === 0 && Math.random() < 0.8) {
+                const possible = Object.keys(game.themeColors).filter(t => t !== game.theme);
+                const nextTheme = possible[Math.floor(Math.random()*possible.length)];
+                const spawnLane = Math.floor(Math.random() * 3);
+                
+                game.portals.push({
+                    x: canvas.width,
+                    y: lanes[spawnLane].ground - 60,
+                    width: 56,
+                    height: 60,
+                    spawnLane: spawnLane,
+                    color: game.themeColors[nextTheme].accent,
+                    targetTheme: nextTheme
+                });
+            }
+
+            // Portal collision and theme change
+            let portalUsed = false;
+            game.portals = game.portals.filter(portal => {
+                portal.x -= game.speed;
+                
+                if (!portalUsed && !game.transition.isActive &&
+                    game.player.currentLane === portal.spawnLane &&
+                    game.player.x < portal.x + portal.width &&
+                    game.player.x + game.player.width > portal.x &&
+                    game.player.y < portal.y + portal.height &&
+                    game.player.y + game.player.height > portal.y) {
+                    
+                    let newLane = Math.floor(Math.random() * 3);
+                    while (newLane === game.player.currentLane) {
+                        newLane = Math.floor(Math.random() * 3);
+                    }
+                    game.player.currentLane = newLane;
+                    game.player.targetLane = newLane;
+                    game.player.y = lanes[newLane].ground - game.player.height;
+                    game.player.velocityY = 0;
+                    game.player.isJumping = false;
+                    game.player.laneTransition = 0;
+                    
+                    game.transition.isActive = true;
+                    game.transition.timer = 0;
+                    game.transition.nextTheme = portal.targetTheme;
+                    
+                    game.portalImmunity = true;
+                    game.portalImmunityTimer = 120;
+                    
+                    createParticles(portal.x + portal.width/2, portal.y + portal.height/2, portal.color, 20);
+                    
+                    portalUsed = true;
+                    return false;
+                }
+                
+                return portal.x > -portal.width;
+            });
+
+            let effectiveSpeed = game.speed;
+            if (game.speedBoost) effectiveSpeed *= 1.5;
+            if (game.slowdown) effectiveSpeed *= 0.5;
+
+            // Update obstacles
+            game.obstacles = game.obstacles.filter(obs => {
+                obs.x -= effectiveSpeed;
+                
+                const playerHeight = isDucking && !game.player.isJumping ? 26 : 48;
+                const playerY = isDucking && !game.player.isJumping ? game.player.y + 22 : game.player.y;
+                
+                if (!game.invincible && !game.portalImmunity &&
+                    game.player.currentLane === obs.lane &&
+                    game.player.x + 8 < obs.x + obs.width &&
+                    game.player.x + game.player.width - 8 > obs.x &&
+                    playerY < obs.y + obs.height &&
+                    playerY + playerHeight > obs.y) {
+                    gameState = 'gameover';
+                    if (score > highScore) highScore = score;
+                    createParticles(game.player.x + game.player.width/2, game.player.y + game.player.height/2, '#FF0000', 15);
+                    return false;
+                }
+                
+                return obs.x > -obs.width;
+            });
+
+            // Update coins
+            game.coins = game.coins.filter(coin => {
+                coin.x -= effectiveSpeed;
+                
+                if (game.player.currentLane === coin.lane &&
+                    game.player.x < coin.x + coin.width &&
+                    game.player.x + game.player.width > coin.x &&
+                    game.player.y < coin.y + coin.height &&
+                    game.player.y + game.player.height > coin.y) {
+                    game.coinCount += 1;
+                    score += 10;
+                    createParticles(coin.x + coin.width/2, coin.y + coin.height/2, '#FFD700', 8);
+                    return false;
+                }
+                
+                return coin.x > -coin.width;
+            });
+
+            // Update powerups
+            game.powerups = game.powerups.filter(pu => {
+                pu.x -= effectiveSpeed;
+                
+                if (game.player.currentLane === pu.lane &&
+                    game.player.x < pu.x + pu.width &&
+                    game.player.x + game.player.width > pu.x &&
+                    game.player.y < pu.y + pu.height &&
+                    game.player.y + game.player.height > pu.y) {
+                    
+                    if (pu.type === 'shield') {
+                        game.invincible = true;
+                        game.invincibleTimer = 300;
+                    } else if (pu.type === 'speedBoost') {
+                        game.speedBoost = true;
+                        game.speedBoostTimer = 240;
+                    } else if (pu.type === 'scoreMultiplier') {
+                        game.scoreMultiplier = 2;
+                        game.scoreMultiplierTimer = 300;
+                    } else if (pu.type === 'slowdown') {
+                        game.slowdown = true;
+                        game.slowdownTimer = 300;
+                    }
+                    
+                    createParticles(pu.x + pu.width/2, pu.y + pu.height/2, game.themeColors[game.theme].powerup, 12);
+                    
+                    return false;
+                }
+                
+                return pu.x > -pu.width;
+            });
+
+            // Update timers
+            if (game.invincible) {
+                game.invincibleTimer--;
+                if (game.invincibleTimer <= 0) game.invincible = false;
+            }
+            
+            if (game.portalImmunity) {
+                game.portalImmunityTimer--;
+                if (game.portalImmunityTimer <= 0) game.portalImmunity = false;
+            }
+            
+            if (game.speedBoost) {
+                game.speedBoostTimer--;
+                if (game.speedBoostTimer <= 0) game.speedBoost = false;
+            }
+            
+            if (game.slowdown) {
+                game.slowdownTimer--;
+                if (game.slowdownTimer <= 0) game.slowdown = false;
+            }
+            
+            if (game.scoreMultiplier > 1) {
+                game.scoreMultiplierTimer--;
+                if (game.scoreMultiplierTimer <= 0) game.scoreMultiplier = 1;
+            }
+
+            // Theme transition
+            if (game.transition.isActive) {
+                game.transition.timer++;
+                if (game.transition.timer === Math.floor(game.transition.duration / 2)) {
+                    game.theme = game.transition.nextTheme || 'default';
+                    game.stars = [];
+                    populateBackground(game.theme);
+                }
+                if (game.transition.timer >= game.transition.duration) {
+                    game.transition.isActive = false;
+                    game.transition.timer = 0;
+                    game.transition.nextTheme = null;
+                }
+            }
+
+            // Difficulty increase
+            if (game.frameCount % 450 === 0 && game.speed < 14) {
+                game.speed += 0.25;
+            }
+
+            score = Math.floor(game.frameCount / 10);
+            
+            // Update stats display
+            document.getElementById('stats').textContent = `Theme: ${game.theme.toUpperCase()} | Distance: ${Math.floor(distance)}m | Speed: ${game.speed.toFixed(1)}`;
+        }
+
+        function draw() {
+            // Sky gradient
+            const skyColors = game.themeColors[game.theme].sky;
+            const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            skyColors.forEach((color, i) => {
+                gradient.addColorStop(i / (skyColors.length - 1), color);
+            });
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            if (gameState === 'menu') {
+                drawBackgroundObjects();
+                drawEnhancedClouds();
+                drawLanes();
+                
+                // Title with shadow
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(canvas.width / 2 - 320, canvas.height / 2 - 180, 640, 350);
+                
+                ctx.fillStyle = '#000';
+                ctx.font = 'bold 64px monospace';
+                ctx.fillText('MUMMY RUNNER', canvas.width / 2 - 282, canvas.height / 2 - 78);
+                
+                ctx.fillStyle = game.themeColors[game.theme].accent;
+                ctx.font = 'bold 64px monospace';
+                ctx.fillText('MUMMY RUNNER', canvas.width / 2 - 280, canvas.height / 2 - 80);
+                
+                ctx.fillStyle = '#FFF';
+                ctx.font = '28px monospace';
+                ctx.fillText('Click or Press SPACE to Start', canvas.width / 2 - 240, canvas.height / 2 - 10);
+                
+                ctx.font = '20px monospace';
+                ctx.fillStyle = '#FFD700';
+                ctx.fillText('⌨️  SPACE: Jump over green obstacles', canvas.width / 2 - 220, canvas.height / 2 + 35);
+                ctx.fillText('⌨️  DOWN: Duck under red flying obstacles', canvas.width / 2 - 240, canvas.height / 2 + 65);
+                ctx.fillText('🌀 Portals: Teleport and change theme!', canvas.width / 2 - 220, canvas.height / 2 + 95);
+                ctx.fillText('💰 Collect coins and powerups!', canvas.width / 2 - 180, canvas.height / 2 + 125);
+                
+            } else if (gameState === 'playing') {
+                drawBackgroundObjects();
+                drawEnhancedClouds();
+                drawLanes();
+                
+                game.obstacles.forEach(drawDetailedObstacle);
+                game.coins.forEach(drawCoin);
+                game.powerups.forEach(drawEnhancedPowerup);
+                game.portals.forEach(drawEnhancedPortal);
+                drawParticles();
+                drawMummy();
+                drawUI();
+
+                // Transition flash with color
+                if (game.transition.isActive) {
+                    const half = Math.floor(game.transition.duration / 2);
+                    let alpha = game.transition.timer <= half ? game.transition.timer / half : (game.transition.duration - game.transition.timer) / half;
+                    alpha = Math.min(Math.max(alpha, 0), 0.95);
+                    
+                    const flashColor = game.transition.nextTheme ? game.themeColors[game.transition.nextTheme].accent : '#FFF';
+                    ctx.fillStyle = hexToRgba(flashColor, alpha);
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                }
+                
+            } else if (gameState === 'gameover') {
+                drawEnhancedClouds();
+                drawLanes();
+                
+                // Game over overlay
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = '#000';
+                ctx.font = 'bold 72px monospace';
+                ctx.fillText('GAME OVER', canvas.width / 2 - 222, canvas.height / 2 - 58);
+                
+                ctx.fillStyle = '#E74C3C';
+                ctx.font = 'bold 72px monospace';
+                ctx.fillText('GAME OVER', canvas.width / 2 - 220, canvas.height / 2 - 60);
+                
+                ctx.fillStyle = '#FFF';
+                ctx.font = 'bold 32px monospace';
+                ctx.fillText('Score: ' + score, canvas.width / 2 - 100, canvas.height / 2 + 20);
+                ctx.fillText('Coins: ' + game.coinCount, canvas.width / 2 - 100, canvas.height / 2 + 60);
+                ctx.fillText('Distance: ' + Math.floor(distance) + 'm', canvas.width / 2 - 140, canvas.height / 2 + 100);
+                
+                ctx.fillStyle = '#FFD700';
+                ctx.font = 'bold 28px monospace';
+                ctx.fillText('High Score: ' + highScore, canvas.width / 2 - 140, canvas.height / 2 + 140);
+                
+                ctx.fillStyle = '#AAA';
+                ctx.font = '24px monospace';
+                ctx.fillText('Click or Press SPACE to Restart', canvas.width / 2 - 230, canvas.height / 2 + 190);
+            }
+        }
+
+        function hexToRgba(hex, alpha) {
+            const r = parseInt(hex.slice(1, 3), 16);
+            const g = parseInt(hex.slice(3, 5), 16);
+            const b = parseInt(hex.slice(5, 7), 16);
+            return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+        }
+
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        gameLoop();
+    </script>
+</body>
+</html>
